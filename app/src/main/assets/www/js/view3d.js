@@ -296,8 +296,23 @@
     }
 
     // Texture di un materiale tenendo conto del tipo di posa
+    // Le foto dei negozi vengono prima salvate dentro l'app, poi usate come texture
+    _localize(m) {
+      this._pendingImg = this._pendingImg || {};
+      if (this._pendingImg[m.id] || !CM.localImage) return;
+      this._pendingImg[m.id] = true;
+      CM.localImage(m.img, 1024).then(d => {
+        const cur = CM.lib.material(m.id);
+        if (!cur) return;
+        if (d) cur.img = d; else { cur.imgRemote = cur.img; cur.img = ''; }
+        try { CM.lib.saveMaterial(cur); } catch (e) {}
+        if (this.project) this.build(this.project);
+      });
+    }
+
     _surfaceTexture(m, pose, redraw) {
       let tex;
+      if (m.img && /^https?:/i.test(m.img)) { this._localize(m); m = Object.assign({}, m, { img: '' }); }
       pose = pose || 'dritta';
       if (m.img) {
         tex = imageTexture(m.img, redraw);

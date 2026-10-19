@@ -186,20 +186,35 @@
         return;
       }
       if (r !== 'ok') return;
-      let n = 0;
+      const chosen = cands.filter((c, i) => selected[i] && c.img && /^https?:/i.test(c.img));
+      if (chosen.length) {
+        U().toast('Salvo le foto degli articoli…');
+        for (let i = 0; i < chosen.length; i += 4) {
+          await Promise.all(chosen.slice(i, i + 4).map(async c => {
+            const d = await CM.localImage(c.img, c.kind === 'material' ? 1024 : 480);
+            if (d) c.img = d;
+          }));
+        }
+      }
+      let n = 0, lastItem = null;
       cands.forEach((c, i) => {
         if (!selected[i]) return;
         if (c.kind === 'material') {
           CM.lib.saveMaterial(Object.assign({ id: CM.uid('m'), name: c.name, store, url: c.url, img: c.img }, c.data, { cat: c.cat === 'pitture' ? 'pitture' : 'pavimenti' }));
         } else {
           const d = Object.assign({}, c.data); delete d.dimsFound;
-          CM.lib.saveItem(Object.assign({ id: CM.uid('c'), name: c.name, cat: c.cat, store, url: c.url, img: c.img }, d));
+          lastItem = Object.assign({ id: CM.uid('c'), name: c.name, cat: c.cat, store, url: c.url, img: c.img }, d);
+          CM.lib.saveItem(lastItem);
         }
         n++;
       });
       U().toast(n + ' articoli aggiunti a “I miei articoli”');
       SHOP.syncWatch();
       if (CM.app && CM.app.tab() === 'arredo') CM.app.refreshTab();
+      if (n === 1 && lastItem && CM.app && CM.app.project()) {
+        const go = await U().confirmDialog('Articolo salvato', 'Lo trovi in Arredo › I miei articoli. Per vederlo in pianta e nel 3D va messo nella casa: lo metto ora?', 'Metti in pianta');
+        if (go) CM.app.placeItem(lastItem);
+      }
     },
 
     async aiExtract(res) {
@@ -232,6 +247,22 @@
       U().toast('Ricontrollo ' + list.length + ' prezzi…');
       native().refreshPrices(JSON.stringify(list));
     }
+  };
+
+  /* ---------- Foto dei prodotti salvate dentro l'app ----------
+     I siti dei negozi spesso non permettono di usare le loro foto come texture 3D:
+     le scarico dal telefono e le conservo come immagini interne. */
+  const pendingImages = {};
+  CM.onImageFetched = function (id, data) { const cb = pendingImages[id]; delete pendingImages[id]; if (cb) cb(data || null); };
+  CM.localImage = function (url, max) {
+    if (!url || /^data:/.test(url)) return Promise.resolve(url || null);
+    if (!native() || !native().fetchImage) return Promise.resolve(null);
+    return new Promise(resolve => {
+      const id = CM.uid('img');
+      const t = setTimeout(() => { delete pendingImages[id]; resolve(null); }, 30000);
+      pendingImages[id] = (d) => { clearTimeout(t); resolve(d); };
+      native().fetchImage(url, id, max || 800);
+    });
   };
 
   // Risultato della pagina del negozio (dal guscio Android)

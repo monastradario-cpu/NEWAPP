@@ -513,6 +513,60 @@ public class MainActivity extends Activity {
             return false;
         }
 
+        /** Scarica un'immagine (foto prodotto) e la restituisce come data URL, aggirando i limiti dei siti. */
+        @JavascriptInterface
+        public void fetchImage(String url, String cbId, int maxSize) {
+            new Thread(() -> {
+                String result = "";
+                java.net.HttpURLConnection con = null;
+                try {
+                    con = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                    con.setConnectTimeout(15000);
+                    con.setReadTimeout(20000);
+                    con.setInstanceFollowRedirects(true);
+                    con.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36");
+                    con.setRequestProperty("Accept", "image/avif,image/webp,image/*,*/*");
+                    InputStream in = con.getInputStream();
+                    java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[16384];
+                    int n, total = 0;
+                    while ((n = in.read(buf)) > 0 && total < 12_000_000) { bos.write(buf, 0, n); total += n; }
+                    in.close();
+                    byte[] data = bos.toByteArray();
+                    android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                    o.inJustDecodeBounds = true;
+                    android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, o);
+                    int sample = 1, lim = maxSize > 0 ? maxSize : 1024;
+                    while (o.outWidth / (sample * 2) >= lim || o.outHeight / (sample * 2) >= lim) sample *= 2;
+                    o = new android.graphics.BitmapFactory.Options();
+                    o.inSampleSize = sample;
+                    Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, o);
+                    if (bmp != null) {
+                        float k = Math.min(1f, (float) lim / Math.max(bmp.getWidth(), bmp.getHeight()));
+                        if (k < 1f) {
+                            Bitmap sc = Bitmap.createScaledBitmap(bmp, Math.max(1, Math.round(bmp.getWidth() * k)), Math.max(1, Math.round(bmp.getHeight() * k)), true);
+                            bmp.recycle();
+                            bmp = sc;
+                        }
+                        Bitmap flat = Bitmap.createBitmap(bmp.getWidth(), bmp.getHeight(), Bitmap.Config.ARGB_8888);
+                        flat.eraseColor(Color.WHITE);
+                        new android.graphics.Canvas(flat).drawBitmap(bmp, 0, 0, null);
+                        bmp.recycle();
+                        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                        flat.compress(Bitmap.CompressFormat.JPEG, 85, out);
+                        flat.recycle();
+                        result = "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Immagine non scaricata: " + url);
+                } finally {
+                    if (con != null) con.disconnect();
+                }
+                final String js = "window.CasaMia && CasaMia.onImageFetched && CasaMia.onImageFetched(" + org.json.JSONObject.quote(cbId) + "," + org.json.JSONObject.quote(result) + ")";
+                runOnUiThread(() -> web.evaluateJavascript(js, null));
+            }).start();
+        }
+
         @JavascriptInterface
         public void openShop(String url) {
             runOnUiThread(() -> shopPanel.open(url));

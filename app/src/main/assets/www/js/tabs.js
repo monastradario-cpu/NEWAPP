@@ -101,7 +101,13 @@
         el('button', { class: 'btn primary', html: U().icon('opening', 18) + 'Importa da negozio', onclick: () => CM.shop.open() }),
         el('button', { class: 'btn', text: 'Nuovo articolo', onclick: async () => {
           const c = await U().menu('Nuovo articolo', [{ id: 'mobile', label: 'Mobile o oggetto', icon: 'room' }, { id: 'piastrella', label: 'Piastrella o pavimento', icon: 'grid' }, { id: 'pittura', label: 'Pittura', icon: 'rename' }, { id: 'carta', label: 'Carta da parati', icon: 'beam' }]);
-          if (c === 'mobile') await T.editItem(null); else if (c) await T.editMaterial(null, c);
+          if (c === 'mobile') {
+            const it = await T.editItem(null);
+            if (it && app().project()) {
+              const go = await U().confirmDialog('Articolo salvato', 'Per vederlo in pianta e nel 3D va messo nella casa: lo metto ora?', 'Metti in pianta');
+              if (go) { app().placeItem(it); return; }
+            }
+          } else if (c) await T.editMaterial(null, c);
           app().refreshTab();
         } })
       ])
@@ -176,6 +182,7 @@
     if (!r) return null;
     if (!v.name.trim()) v.name = 'Articolo';
     delete v.base;
+    if (v.img && /^https?:/i.test(v.img) && CM.localImage) { U().toast('Salvo la foto\u2026'); const d = await CM.localImage(v.img, 480); if (d) v.img = d; }
     CM.lib.saveItem(v);
     U().toast(base ? 'Salvato tra i tuoi articoli' : 'Articolo salvato');
     return v;
@@ -221,6 +228,7 @@
     if (r === 'delete') { CM.lib.removeMaterial(v.id); U().toast('Materiale eliminato'); return null; }
     if (!r) return null;
     if (!v.name.trim()) v.name = 'Materiale';
+    if (v.img && /^https?:/i.test(v.img) && CM.localImage) { U().toast('Salvo la foto\u2026'); const d = await CM.localImage(v.img, 1024); if (d) v.img = d; }
     CM.lib.saveMaterial(v);
     U().toast('Materiale salvato');
     return v;
