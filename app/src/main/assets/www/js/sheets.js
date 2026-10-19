@@ -234,7 +234,8 @@
     sheet.appendChild(el('div', { class: 'field full' }, [el('span', { class: 'lbl', text: 'Visibilità della planimetria' }), el('div', { class: 'range-row' }, [range])]));
     sheet.appendChild(el('div', { class: 'actions' }, [
       el('button', { class: 'btn primary', text: 'Calibra la scala', onclick: () => { ctx.closeUnderlay(true); ctx.calibrate(); } }),
-      el('button', { class: 'btn', text: 'Calibra indicando io il muro', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('calibrate'); } }),
+      el('button', { class: 'btn', text: 'Ritaglia sulla casa', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('cropUnderlay'); } }),
+      el('button', { class: 'btn', text: 'Calibra con barra di scala o tratto noto', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('calibrate'); } }),
       el('button', { class: 'btn', text: 'Sposta', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('moveUnderlay'); } }),
       el('button', { class: 'btn', text: 'Riconosci i muri', onclick: () => ctx.detectWalls(false) }),
       el('button', { class: 'btn', text: 'Riconosci con Gemini', onclick: () => ctx.detectWalls(true) }),

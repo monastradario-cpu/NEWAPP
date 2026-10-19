@@ -20,6 +20,7 @@
     fixture: 'Tocca dove mettere il punto d\u2019impianto: vicino a un muro si aggancia alla parete',
     calibrate: 'Trascina lungo un muro di cui conosci la misura, poi inserisci la lunghezza vera',
     moveUnderlay: 'Trascina per spostare la planimetria sotto la pianta',
+    cropUnderlay: 'Trascina un rettangolo intorno alla casa, lasciando fuori cornici, scritte e cartigli',
     calibPick: 'Tocca il muro di cui conosci la misura (quelli blu sono i muri riconosciuti)'
   };
 
@@ -455,6 +456,7 @@
       if (this.tool === 'wall' || this.tool === 'column' || this.tool === 'fixture') this._previewPoint(world);
       if (this.tool === 'furniture') this._previewFurniture(world);
       if (this.tool === 'opening') this._previewOpening(world);
+      if (this.tool === 'cropUnderlay') { this.draft = { kind: 'crop', a: world, b: world }; this.draw(); }
       if (this.tool === 'calibrate') { this.gesture.anchor = world; this.draft = { kind: 'chain', points: [world], cursor: world }; this.draw(); }
       if (this.tool === 'moveUnderlay' && this.plan.underlay) { this.snapshot(); this.gesture.snapshotTaken = true; this.gesture.u0 = { x: this.plan.underlay.x, y: this.plan.underlay.y }; }
     }
@@ -505,6 +507,8 @@
         this._previewFurniture(world);
       } else if (this.tool === 'opening') {
         this._previewOpening(world);
+      } else if (this.tool === 'cropUnderlay' && this.draft) {
+        this.draft.b = world; this.draw();
       } else if (this.tool === 'calibrate' && this.draft) {
         this.draft.cursor = world; this.draw();
       } else if (this.tool === 'moveUnderlay' && g.u0 && this.plan.underlay) {
@@ -546,6 +550,11 @@
         case 'calibrate': this._finishCalibrate(world); break;
         case 'moveUnderlay': if (g.u0) this.commit('underlay'); break;
         case 'calibPick': this._pickCalib(pos); break;
+        case 'cropUnderlay': {
+          const d = this.draft; this.draft = null; this.draw();
+          if (d && this.hooks.onCrop) this.hooks.onCrop({ x0: Math.min(d.a.x, d.b.x), y0: Math.min(d.a.y, d.b.y), x1: Math.max(d.a.x, d.b.x), y1: Math.max(d.a.y, d.b.y) });
+          break;
+        }
       }
     }
 

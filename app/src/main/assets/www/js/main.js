@@ -451,7 +451,10 @@
       editor.fit();
       sheetMode = null;
       buildTools(); renderSheet();
-      autoCalibrate();
+      const r = await U.dialog({ title: 'Inquadra solo la casa', text: 'Trascina un rettangolo intorno alla pianta della casa, lasciando fuori cornici, intestazioni, scritte e cartigli: cos\u00ec riconosco i muri giusti. Se la planimetria ha una barra di scala sul margine (es. \u201c10 metri\u201d nelle schede catastali) e non conosci la misura di nessun muro, usa prima la barra.', actions: [{ label: 'Salta', value: 'skip' }, { label: 'Prima la barra di scala', value: 'bar' }, { label: 'Ritaglia', value: 'crop', primary: true }] });
+      if (r === 'crop') { editor.setTool('cropUnderlay'); buildTools(); }
+      else if (r === 'bar') { editor.setTool('calibrate'); buildTools(); U.toast('Trascina il dito lungo la barra di scala, da un estremo all\u2019altro'); }
+      else autoCalibrate();
     } catch (e) {
       U.toast(String(e.message) === 'PDF' ? 'I PDF si aprono nell’app sul telefono' : 'Non riesco ad aprire questo file');
     }
@@ -490,10 +493,10 @@
       title: 'Quanto misura il muro evidenziato?',
       text: 'L\u2019ho riconosciuto io: \u00e8 il muro blu con il punto di domanda. Inserisci la sua lunghezza vera. Se conosci meglio la misura di un altro muro blu, scegli \u201cAltro muro\u201d e toccalo.',
       body,
-      actions: [{ label: 'Altro muro', value: 'other' }, { label: 'Indico io', value: 'manual' }, { label: 'Conferma', value: () => input.value, primary: true }]
+      actions: [{ label: 'Altro muro', value: 'other' }, { label: 'Uso la barra di scala o un altro tratto', value: 'manual' }, { label: 'Conferma', value: () => input.value, primary: true }]
     });
     if (r === 'other') { U.toast('Tocca il muro di cui conosci la misura'); return; }
-    if (r === 'manual') { editor.calib = null; editor.setTool('calibrate'); buildTools(); return; }
+    if (r === 'manual') { editor.calib = null; editor.setTool('calibrate'); buildTools(); U.toast('Trascina lungo la barra di scala (es. \u201c10 metri\u201d) o un tratto di cui sai la misura'); return; }
     if (r == null) { editor.calib = null; editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); return; }
     const real = CM.fmt.parseM(r, 'm');
     if (!(real > 0.1)) { U.toast('Misura non valida'); return askCalibration(); }
@@ -510,6 +513,20 @@
     sheetMode = 'underlay'; renderSheet();
   }
 
+  async function onCrop(rect) {
+    const u = editor.plan.underlay;
+    if (!u) return;
+    try {
+      const nu = await CM.underlay.crop(u, rect);
+      editor.mutate(pl => { pl.underlay = nu; }, 'crop');
+      editor.setTool('select');
+      editor.fit();
+      buildTools();
+      if (!nu.calibrated) autoCalibrate();
+      else { sheetMode = 'underlay'; renderSheet(); detectWalls(false); }
+    } catch (e) { U.toast('Ritaglio troppo piccolo: riprova'); }
+  }
+
   async function onCalibrate(a, b, len) {
     const v = await U.promptDialog('Quanto misura questo muro?', '', { label: 'Misura reale', unit: 'm', inputmode: 'decimal', mono: true, text: 'Sulla planimetria hai tracciato ' + CM.fmt.m(len) + ' (scala provvisoria).' });
     if (v == null) { editor.setTool('select'); buildTools(); return; }
@@ -518,6 +535,11 @@
     editor.applyCalibration(a, len, real);
     buildTools();
     U.toast('Planimetria in scala');
+    const u = editor.plan.underlay;
+    if (u && !u.cropped) {
+      const c = await U.dialog({ title: 'Ora inquadra la casa', text: 'La scala \u00e8 fatta. Trascina un rettangolo intorno alla pianta della casa (fuori cornici e scritte): poi riconosco i muri gi\u00e0 in scala.', actions: [{ label: 'Salta', value: false }, { label: 'Ritaglia', value: true, primary: true }] });
+      if (c) { editor.setTool('cropUnderlay'); buildTools(); return; }
+    }
     sheetMode = 'underlay'; renderSheet();
   }
 
@@ -872,6 +894,7 @@
         if (actions.includes('undoPoint')) box.appendChild(el('button', { text: 'Annulla punto', onclick: () => editor.undoPoint() }));
         if (actions.includes('finish')) box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => editor.finishChain() }));
         if (editor.tool === 'fixture') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
+        if (editor.tool === 'cropUnderlay') box.appendChild(el('button', { text: 'Salta', onclick: () => { editor.setTool('select'); buildTools(); autoCalibrate(); } }));
         if (editor.tool === 'calibPick') box.appendChild(el('button', { class: 'primary', text: 'Inserisci misura', onclick: () => askCalibration() }));
         if (editor.tool === 'calibrate' || editor.tool === 'moveUnderlay') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); } }));
       },
@@ -880,6 +903,7 @@
       onDraw: (view) => updateScale(view),
       onCalibrate,
       onCalibPick: () => askCalibration(),
+      onCrop,
       onPin: (ids) => CM.tabs.showDiary(ids)
     });
 

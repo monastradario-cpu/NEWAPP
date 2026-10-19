@@ -126,7 +126,57 @@
         : { a: { x: u.x + sg.mid * kx, y: u.y + sg.b0 * ky }, b: { x: u.x + sg.mid * kx, y: u.y + sg.b1 * ky }, t: sg.th * kx });
     },
 
+    // Muri disegnati con due linee parallele (tipico delle planimetrie catastali): diventano un solo muro
+    mergeDoubleLines(segs) {
+      const horiz = (s) => Math.abs(s.a.y - s.b.y) < 1e-6;
+      const norm = segs.map(s => {
+        const h = horiz(s);
+        const c = h ? s.a.y : s.a.x;
+        const lo = h ? Math.min(s.a.x, s.b.x) : Math.min(s.a.y, s.b.y), hi = h ? Math.max(s.a.x, s.b.x) : Math.max(s.a.y, s.b.y);
+        return { h, c, lo, hi, t: s.t, used: false };
+      });
+      const out = [];
+      for (let i = 0; i < norm.length; i++) {
+        const a = norm[i];
+        if (a.used) continue;
+        let best = null, bestD = Infinity;
+        for (let j = i + 1; j < norm.length; j++) {
+          const b = norm[j];
+          if (b.used || b.h !== a.h) continue;
+          const d = Math.abs(a.c - b.c);
+          if (d < 0.06 || d > 0.55) continue;
+          const ov = Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo);
+          if (ov < 0.6 * Math.min(a.hi - a.lo, b.hi - b.lo)) continue;
+          if (d < bestD) { bestD = d; best = b; }
+        }
+        a.used = true;
+        let seg = a;
+        if (best) {
+          best.used = true;
+          seg = { h: a.h, c: (a.c + best.c) / 2, lo: Math.min(a.lo, best.lo), hi: Math.max(a.hi, best.hi), t: bestD + Math.max(a.t, best.t) * 0.5 };
+        }
+        out.push(seg.h ? { a: { x: seg.lo, y: seg.c }, b: { x: seg.hi, y: seg.c }, t: seg.t } : { a: { x: seg.c, y: seg.lo }, b: { x: seg.c, y: seg.hi }, t: seg.t });
+      }
+      return out;
+    },
+
+    // Ritaglia la planimetria al rettangolo (in metri) scelto dall'utente, mantenendo la scala
+    async crop(u, r) {
+      const im = await loadImg(u.src);
+      const kx = u.pxW / u.wM, ky = u.pxH / u.hM;
+      const x0 = Math.max(0, Math.floor((r.x0 - u.x) * kx)), y0 = Math.max(0, Math.floor((r.y0 - u.y) * ky));
+      const x1 = Math.min(u.pxW, Math.ceil((r.x1 - u.x) * kx)), y1 = Math.min(u.pxH, Math.ceil((r.y1 - u.y) * ky));
+      if (x1 - x0 < 20 || y1 - y0 < 20) throw new Error('Ritaglio troppo piccolo');
+      const sx = im.naturalWidth / u.pxW, sy = im.naturalHeight / u.pxH;
+      const c = document.createElement('canvas'); c.width = x1 - x0; c.height = y1 - y0;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(im, x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy, 0, 0, c.width, c.height);
+      return Object.assign({}, u, { cropped: true, src: c.toDataURL('image/jpeg', 0.9), pxW: c.width, pxH: c.height, x: u.x + x0 / kx, y: u.y + y0 / ky, wM: (x1 - x0) / kx, hM: (y1 - y0) / ky });
+    },
+
     applyWalls(plan, segs, state) {
+      segs = U.mergeDoubleLines(segs);
       let n = 0;
       for (const sg of segs) {
         if (G.dist(sg.a, sg.b) < 0.3) continue;
