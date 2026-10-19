@@ -133,6 +133,7 @@ input, select { font: inherit; color: inherit; }
 .hint .hint-actions { display: flex; gap: 6px; pointer-events: auto; }
 .hint button { min-height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.35); background: transparent; color: #fff; font-weight: 600; font-size: 13px; }
 .hint button.primary { background: #fff; color: var(--ink); border-color: #fff; }
+.hint button.arrow { min-width: 48px; min-height: 48px; font-size: 18px; padding: 0; }
 .hint.hidden-soft { opacity: 0; }
 
 .sheet {

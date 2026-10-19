@@ -933,7 +933,11 @@
         if (editor.tool === 'fixture') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
         if (editor.tool === 'erase') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
         if (editor.tool === 'cropUnderlay') box.appendChild(el('button', { text: 'Salta', onclick: () => { editor.setTool('select'); buildTools(); autoCalibrate(); } }));
-        if (editor.tool === 'calibPick') box.appendChild(el('button', { class: 'primary', text: 'Inserisci misura', onclick: () => askCalibration() }));
+        if (editor.tool === 'calibPick') {
+          box.appendChild(el('button', { class: 'arrow', 'aria-label': 'Muro precedente', text: '\u25C0', onclick: () => editor.stepCalib(-1) }));
+          box.appendChild(el('button', { class: 'arrow', 'aria-label': 'Muro successivo', text: '\u25B6', onclick: () => editor.stepCalib(1) }));
+          box.appendChild(el('button', { class: 'primary', text: 'Misura', onclick: () => askCalibration() }));
+        }
         if (editor.tool === 'calibrate' || editor.tool === 'moveUnderlay') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); } }));
       },
       onHistory: (u, r) => { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },

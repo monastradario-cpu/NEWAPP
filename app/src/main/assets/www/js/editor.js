@@ -145,6 +145,7 @@
       if (this.tool === 'furniture' && this.pendingItem) return 'Tocca dove mettere: ' + this.pendingItem.name + ' (vicino a un muro si appoggia da solo)';
       if (this.tool === 'fixture') return 'Tocca dove mettere: ' + CM.FIXTURES[this.fixtureKind].label.toLowerCase();
       if (this.tool === 'opening') return 'Tocca un muro per inserire: ' + CM.OPENINGS[this.openingKind].label.toLowerCase();
+      if (this.tool === 'calibPick' && this.calib) return 'Muro ' + (this.calib.idx + 1) + ' di ' + this.calib.segs.length + ': usa le frecce per scegliere quello di cui conosci la misura';
       return HINTS[this.tool];
     }
 
@@ -929,6 +930,14 @@
       this.draw();
     }
     calibSeg() { return this.calib ? this.calib.segs[this.calib.idx] : null; }
+    // Frecce: passa al muro precedente o successivo senza doverlo toccare
+    stepCalib(d) {
+      if (!this.calib || !this.calib.segs.length) return;
+      const n = this.calib.segs.length;
+      this.calib.idx = (this.calib.idx + d + n) % n;
+      this._drawCalib();
+      this._emitHint();
+    }
     _pickCalib(pos) {
       if (!this.calib) return;
       const w = this.toWorld(pos.x, pos.y);
@@ -937,6 +946,7 @@
       if (best < 0) { if (this.hooks.onToast) this.hooks.onToast('Tocca uno dei muri blu'); return; }
       this.calib.idx = best;
       this._drawCalib();
+      this._emitHint();
       if (this.hooks.onCalibPick) this.hooks.onCalibPick(best);
     }
     // Inquadra un tratto nella parte di schermo indicata
