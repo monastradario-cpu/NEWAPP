@@ -183,37 +183,46 @@
     U().toast('Scegli Google Drive per salvare il backup');
   };
 
+  // Importa un progetto o un backup dal suo contenuto (file scelto, ricevuto su WhatsApp, da Drive\u2026)
+  SH.importText = function (text) {
+    let d;
+    try { d = JSON.parse(String(text).replace(/^\uFEFF/, '')); } catch (e) { U().toast('File non riconosciuto: non \u00e8 un progetto di Casa Mia'); return null; }
+    const mergeLib = (key, list) => { if (!list || !list.length) return; const cur = CM.store.getJSON(key, []); const ids = new Set(cur.map(x => x.id)); CM.store.putJSON(key, cur.concat(list.filter(x => !ids.has(x.id)))); };
+    if (d.type === 'casamia-backup') {
+      let n = 0;
+      for (const p of d.projects || []) { CM.project.normalize(p); CM.store.saveProject(p); n++; }
+      mergeLib('catalogo', d.catalog); mergeLib('materiali', d.materials);
+      if (d.prices && Object.keys(d.prices).length) CM.store.putJSON('prezzi', Object.assign(CM.store.getJSON('prezzi', {}), d.prices));
+      U().toast(n + ' progetti ripristinati');
+      return { backup: true };
+    }
+    // progetto esportato, oppure un progetto \u201cnudo\u201d (ha la pianta)
+    const raw = d.type === 'casamia-progetto' && d.project ? d.project : (d.variants || d.plan ? d : null);
+    if (raw) {
+      const p = CM.project.normalize(raw);
+      if (CM.store.loadProject(p.id)) { p.id = CM.uid('p'); p.name += ' (ricevuto)'; }
+      p.updated = Date.now();
+      CM.store.saveProject(p);
+      mergeLib('materiali', d.materials); mergeLib('catalogo', d.catalog);
+      U().toast('Progetto \u201c' + p.name + '\u201d caricato');
+      return { project: p.id };
+    }
+    U().toast('Questo file non \u00e8 un progetto di Casa Mia');
+    return null;
+  };
+
   SH.importFile = function () {
     return new Promise(resolve => {
-      const input = el('input', { type: 'file', accept: '.json,application/json,text/plain,*/*' });
+      const input = el('input', { type: 'file', accept: '*/*', style: 'display:none' });
+      document.body.appendChild(input);
       input.addEventListener('change', () => {
         const f = input.files[0];
+        input.remove();
         if (!f) return resolve(null);
+        if (/^image\/|pdf$/i.test(f.type || '')) { U().toast('Questa \u00e8 una planimetria: usa \u201cPlanimetria\u201d'); return resolve(null); }
         const r = new FileReader();
-        r.onload = () => {
-          let d;
-          try { d = JSON.parse(r.result); } catch (e) { U().toast('File non riconosciuto'); return resolve(null); }
-          const mergeLib = (key, list) => { if (!list || !list.length) return; const cur = CM.store.getJSON(key, []); const ids = new Set(cur.map(x => x.id)); CM.store.putJSON(key, cur.concat(list.filter(x => !ids.has(x.id)))); };
-          if (d.type === 'casamia-backup') {
-            let n = 0;
-            for (const p of d.projects || []) { CM.project.normalize(p); CM.store.saveProject(p); n++; }
-            mergeLib('catalogo', d.catalog); mergeLib('materiali', d.materials);
-            if (d.prices && Object.keys(d.prices).length) CM.store.putJSON('prezzi', Object.assign(CM.store.getJSON('prezzi', {}), d.prices));
-            U().toast(n + ' progetti ripristinati');
-            return resolve({ backup: true });
-          }
-          if (d.type === 'casamia-progetto' && d.project) {
-            const p = CM.project.normalize(d.project);
-            if (CM.store.loadProject(p.id)) { p.id = CM.uid('p'); p.name += ' (ricevuto)'; }
-            p.updated = Date.now();
-            CM.store.saveProject(p);
-            mergeLib('materiali', d.materials);
-            U().toast('Progetto “' + p.name + '” importato');
-            return resolve({ project: p.id });
-          }
-          U().toast('Questo file non è un progetto di Casa Mia');
-          resolve(null);
-        };
+        r.onload = () => resolve(SH.importText(r.result));
+        r.onerror = () => { U().toast('Non riesco a leggere il file'); resolve(null); };
         r.readAsText(f);
       });
       input.click();

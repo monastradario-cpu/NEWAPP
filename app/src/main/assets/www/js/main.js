@@ -114,6 +114,25 @@
     { id: 'erase', label: 'Cancella zona', icon: 'trash' }
   ];
 
+  async function openProjectFile() {
+    const r = await CM.share.importFile();
+    afterImport(r);
+  }
+  function afterImport(r) {
+    if (!r) return;
+    renderHome();
+    if (r.project) openProject(r.project);
+  }
+  // Qualcosa condiviso verso l'app (file di progetto o link di un negozio)
+  CM.onShared = function (text, name) {
+    text = String(text || '').trim();
+    if (!text) { U.toast('File vuoto o non leggibile'); return; }
+    if (/^\s*[{[]/.test(text)) { afterImport(CM.share.importText(text)); return; }
+    const m = /https?:\/\/\S+/.exec(text);
+    if (m && S.isNative && window.CasaMiaAndroid.openShop) { U.toast('Apro il negozio: tocca \u201cImporta\u201d sugli articoli'); window.CasaMiaAndroid.openShop(m[0]); return; }
+    U.toast('Non so cosa fare con questo contenuto');
+  };
+
   /* ---------- Modalit\u00e0 semplice / completa ---------- */
   function isSimple() { return !!S.pref('simpleMode'); }
   function applyMode() {
@@ -1137,7 +1156,7 @@
         { id: 'help', label: 'Guida rapida', icon: 'help' },
         { id: 'sample', label: 'Ricrea il progetto d’esempio', icon: 'copy' }
       ]);
-      if (c === 'open') { const r = await CM.share.importFile(); if (r) { renderHome(); if (r.project) openProject(r.project); } }
+      if (c === 'open') { openProjectFile(); }
       if (c === 'backup') CM.share.backupAll();
       if (c === 'autobackup') {
         const on = S.pref('backupAuto') === false;
@@ -1157,6 +1176,7 @@
     $('undoBtn').addEventListener('click', () => editor.undo());
     $('redoBtn').addEventListener('click', () => editor.redo());
     $('moreBtn').addEventListener('click', moreMenu);
+    $('openFile').addEventListener('click', openProjectFile);
     $('modeBtn').addEventListener('click', toggleMode);
     $('probBtn').addEventListener('click', warningsDialog);
     applyMode();
@@ -1202,6 +1222,7 @@
     show('home');
     if (first) setTimeout(() => U.tutorial(), 300);
     console.log('CASAMIA_READY ' + (S.isNative ? 'android' : 'browser'));
+    if (S.isNative && window.CasaMiaAndroid.takeShared) { try { const sh = window.CasaMiaAndroid.takeShared(); if (sh) setTimeout(() => CM.onShared(sh), 400); } catch (e) { console.error(e); } }
     if (S.isNative) {
       setTimeout(() => checkUpdate(false), 2500);
       setTimeout(() => CM.shop.syncWatch(), 4000);

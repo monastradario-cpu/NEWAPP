@@ -62,6 +62,9 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private boolean isResumed = false;
+    // Contenuto condiviso verso l'app (file di progetto o link) in attesa che la pagina sia pronta
+    private String pendingShared = null;
+    private boolean pageReady = false;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
     private ShopPanel shopPanel;
@@ -217,6 +220,51 @@ public class MainActivity extends Activity {
         } else {
             web.loadUrl(START_URL);
         }
+        handleShared(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleShared(intent);
+    }
+
+    /** Apri con / Condividi: legge il file o il testo ricevuto e lo passa alla pagina. */
+    private void handleShared(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        Uri uri = null;
+        String text = null;
+        if (Intent.ACTION_VIEW.equals(action)) uri = intent.getData();
+        else if (Intent.ACTION_SEND.equals(action)) {
+            Object st = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (st instanceof Uri) uri = (Uri) st;
+            else text = intent.getStringExtra(Intent.EXTRA_TEXT);
+        } else return;
+        intent.setAction(Intent.ACTION_MAIN); // non rielaborarlo a ogni rotazione
+        final Uri fUri = uri;
+        final String fText = text;
+        new Thread(() -> {
+            String out = fText;
+            if (fUri != null) {
+                try (java.io.InputStream in = getContentResolver().openInputStream(fUri)) {
+                    java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[65536];
+                    int n, tot = 0;
+                    while (in != null && (n = in.read(buf)) > 0) { bo.write(buf, 0, n); tot += n; if (tot > 60 * 1024 * 1024) break; }
+                    out = new String(bo.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    Log.w(TAG, "Lettura file condiviso non riuscita", e);
+                    out = "";
+                }
+            }
+            final String res = out == null ? "" : out;
+            runOnUiThread(() -> {
+                if (pageReady) web.evaluateJavascript("window.CasaMia && CasaMia.onShared && CasaMia.onShared(" + org.json.JSONObject.quote(res) + ")", null);
+                else pendingShared = res;
+            });
+        }).start();
     }
 
     @Override
@@ -341,6 +389,15 @@ public class MainActivity extends Activity {
 
     /** Archivio chiave/valore su file nella memoria privata dell'app. */
     private class Bridge {
+        @JavascriptInterface
+        public String takeShared() {
+            final String[] out = { null };
+            final java.util.concurrent.CountDownLatch l = new java.util.concurrent.CountDownLatch(1);
+            runOnUiThread(() -> { pageReady = true; out[0] = pendingShared; pendingShared = null; l.countDown(); });
+            try { l.await(2, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
+            return out[0] == null ? "" : out[0];
+        }
+
         private File dir() {
             File d = new File(getFilesDir(), "dati");
             if (!d.exists()) d.mkdirs();
