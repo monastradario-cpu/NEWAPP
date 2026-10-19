@@ -554,6 +554,144 @@
   };
 
   // Pulizia: muri degeneri o doppi, aperture orfane, nodi inutilizzati, stanze degeneri
+  /* Crea automaticamente le stanze negli spazi chiusi dai muri.
+     Le aperture delle porte (fino a 1,3 m) vengono chiuse solo per il calcolo. */
+  P.autoRooms = function (plan, opts) {
+    opts = opts || {};
+    const res = 0.05, DOOR = 1.3;
+    const ids = Object.keys(plan.walls);
+    if (!ids.length) return 0;
+    const b = P.bounds(Object.assign({}, plan, { underlay: null, furniture: {}, fixtures: {} }));
+    if (!b) return 0;
+    const ox = b.minX - 0.5, oy = b.minY - 0.5;
+    const W = Math.ceil((b.maxX - b.minX + 1) / res) + 1, H = Math.ceil((b.maxY - b.minY + 1) / res) + 1;
+    if (W * H > 4e6) return 0;
+    const g = new Uint8Array(W * H); // 1 muro, 2 esterno, 0 libero
+    const gx = (x) => Math.round((x - ox) / res), gy = (y) => Math.round((y - oy) / res);
+    const line = (x0, y0, x1, y1) => {
+      const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+      for (let i = 0; i <= n; i++) {
+        const x = Math.round(x0 + (x1 - x0) * i / n), y = Math.round(y0 + (y1 - y0) * i / n);
+        if (x >= 0 && y >= 0 && x < W && y < H) g[y * W + x] = 1;
+      }
+    };
+    for (const id of ids) {
+      const w = plan.walls[id], A = plan.nodes[w.a], B = plan.nodes[w.b];
+      line(gx(A.x), gy(A.y), gx(B.x), gy(B.y));
+    }
+    // vani porta: prolungo ogni muro oltre il suo estremo (se non continua gi\u00e0) fino a un altro muro vicino
+    const dirs = {};
+    for (const id of ids) {
+      const w = plan.walls[id], A = plan.nodes[w.a], B = plan.nodes[w.b];
+      const L = Math.hypot(A.x - B.x, A.y - B.y); if (L < 1e-6) continue;
+      (dirs[w.a] = dirs[w.a] || []).push({ dx: (B.x - A.x) / L, dy: (B.y - A.y) / L });
+      (dirs[w.b] = dirs[w.b] || []).push({ dx: (A.x - B.x) / L, dy: (A.y - B.y) / L });
+    }
+    for (const nid in dirs) {
+      const A = plan.nodes[nid], list = dirs[nid];
+      if (list.length > 2) continue; // incroci a T: niente prolungamenti
+      const maxD = list.length === 1 ? DOOR : 1.0;
+      for (const d0 of list) {
+        const dx = -d0.dx, dy = -d0.dy; // continuazione oltre il nodo
+        if (list.some(o => o.dx * dx + o.dy * dy > 0.95)) continue;
+        let hitD = 0;
+        for (let d = res * 2; d <= maxD; d += res / 2) {
+          const x = gx(A.x + dx * d), y = gy(A.y + dy * d);
+          if (x < 0 || y < 0 || x >= W || y >= H) break;
+          if (g[y * W + x] === 1) { hitD = d; break; }
+        }
+        if (hitD) line(gx(A.x), gy(A.y), gx(A.x + dx * hitD), gy(A.y + dy * hitD));
+      }
+    }
+    // esterno: riempimento dal bordo
+    const st = [];
+    for (let x = 0; x < W; x++) { st.push(x, (H - 1) * W + x); }
+    for (let y = 0; y < H; y++) { st.push(y * W, y * W + W - 1); }
+    while (st.length) {
+      const i = st.pop();
+      if (g[i]) continue;
+      g[i] = 2;
+      const x = i % W;
+      if (x > 0) st.push(i - 1); if (x < W - 1) st.push(i + 1);
+      if (i >= W) st.push(i - W); if (i < W * (H - 1)) st.push(i + W);
+    }
+    // stanze già presenti: non le duplico
+    const existing = Object.values(plan.rooms).map(r => P.roomPts(plan, r));
+    const xs = [], ys = [];
+    for (const id in plan.nodes) { xs.push(plan.nodes[id].x); ys.push(plan.nodes[id].y); }
+    const snap = (v, arr) => { let best = v, bd = 0.12; for (const a of arr) { const d = Math.abs(a - v); if (d < bd) { bd = d; best = a; } } return best; };
+    const lab = new Int32Array(W * H);
+    let made = 0, named = 0, id = 0;
+    for (let i0 = 0; i0 < W * H; i0++) {
+      if (g[i0] || lab[i0]) continue;
+      id++;
+      const cells = []; const q = [i0]; lab[i0] = id;
+      while (q.length) {
+        const i = q.pop(); cells.push(i);
+        const x = i % W;
+        for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
+          if (j < 0 || j >= W * H || g[j] || lab[j]) continue;
+          lab[j] = id; q.push(j);
+        }
+      }
+      if (cells.length * res * res < 1.0) continue;
+      // contorno: lati delle celle con la stanza a sinistra, concatenati
+      const edges = new Map();
+      const inR = (x, y) => x >= 0 && y >= 0 && x < W && y < H && lab[y * W + x] === id;
+      const key = (x, y) => x + ',' + y;
+      for (const i of cells) {
+        const x = i % W, y = (i / W) | 0;
+        if (!inR(x, y - 1)) edges.set(key(x + 1, y), [x, y]);         // lato alto: da (x+1,y) a (x,y)
+        if (!inR(x, y + 1)) edges.set(key(x, y + 1), [x + 1, y + 1]); // lato basso
+        if (!inR(x - 1, y)) edges.set(key(x, y), [x, y + 1]);         // lato sinistro
+        if (!inR(x + 1, y)) edges.set(key(x + 1, y + 1), [x + 1, y]); // lato destro
+      }
+      let bestLoop = null;
+      const seen = new Set();
+      for (const k0 of edges.keys()) {
+        if (seen.has(k0)) continue;
+        const loop = []; let k = k0, guard = 0;
+        while (!seen.has(k) && guard++ < 200000) {
+          seen.add(k);
+          const [px, py] = k.split(',').map(Number); loop.push([px, py]);
+          const nx = edges.get(k); if (!nx) break;
+          k = key(nx[0], nx[1]);
+        }
+        if (!bestLoop || loop.length > bestLoop.length) bestLoop = loop;
+      }
+      if (!bestLoop || bestLoop.length < 4) continue;
+      // tieni solo i vertici d'angolo
+      let pts = bestLoop.filter((p, i) => {
+        const a = bestLoop[(i - 1 + bestLoop.length) % bestLoop.length], c = bestLoop[(i + 1) % bestLoop.length];
+        return (a[0] - p[0]) * (c[1] - p[1]) - (a[1] - p[1]) * (c[0] - p[0]) !== 0;
+      }).map(p => ({ x: snap(ox + (p[0] - 0.5) * res, xs), y: snap(oy + (p[1] - 0.5) * res, ys) }));
+      // pulizia: punti doppi e allineati dopo l'aggancio
+      for (let pass = 0; pass < 3; pass++) {
+        pts = pts.filter((p, i) => { const q2 = pts[(i + 1) % pts.length]; return Math.hypot(p.x - q2.x, p.y - q2.y) > 0.02; });
+        pts = pts.filter((p, i) => {
+          const a = pts[(i - 1 + pts.length) % pts.length], c = pts[(i + 1) % pts.length];
+          return Math.abs((a.x - p.x) * (c.y - p.y) - (a.y - p.y) * (c.x - p.x)) > 1e-4;
+        });
+      }
+      if (pts.length < 3) continue;
+      const area = Math.abs(G.signedArea(pts));
+      if (area < 1.0) continue;
+      const c = G.centroid(pts);
+      if (existing.some(ep => ep.length && G.inPoly(c, ep))) continue;
+      // balcone: striscia stretta e lunga sul bordo esterno della casa
+      const bx = pts.map(p => p.x), by = pts.map(p => p.y);
+      const rw = Math.max(...bx) - Math.min(...bx), rh = Math.max(...by) - Math.min(...by);
+      const edge = 0.3;
+      const onBorder = Math.min(...bx) - b.minX < edge || b.maxX - Math.max(...bx) < edge || Math.min(...by) - b.minY < edge || b.maxY - Math.max(...by) < edge;
+      const balcony = onBorder && Math.min(rw, rh) < 2.0 && Math.max(rw, rh) >= 3 * Math.min(rw, rh) && Math.max(rw, rh) >= 2.5;
+      made++;
+      const nodes = pts.map(p => P.getOrCreateNode(plan, p.x, p.y));
+      if (!balcony) named++;
+      P.addRoom(plan, nodes, balcony ? { type: 'balcone' } : { name: 'Stanza ' + named });
+    }
+    return made;
+  };
+
   // Elimina tutto ciò che sta dentro un rettangolo (in metri). Ritorna quanti elementi ha tolto.
   P.eraseArea = function (plan, r) {
     const inside = (p) => p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1;

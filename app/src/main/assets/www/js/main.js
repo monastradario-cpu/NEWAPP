@@ -505,13 +505,29 @@
     editor.applyCalibration(sg.a, len, real);
     buildTools();
     const segs = await CM.underlay.detectWalls(editor.plan.underlay).catch(() => []);
-    const ok = segs.length ? await U.confirmDialog('Planimetria in scala', 'Ho trovato ' + segs.length + ' tratti di muro. Li aggiungo alla pianta come muri esistenti, gi\u00e0 con le misure giuste? Poi potrai correggerli e chiudere le stanze. Puoi annullare.', 'Aggiungi i muri') : false;
-    if (ok) {
-      let n = 0;
-      editor.mutate(pl => { n = CM.underlay.applyWalls(pl, segs, 'esistente'); }, 'detect');
-      U.toast(n + ' muri aggiunti');
-    } else U.toast('Planimetria in scala');
+    if (segs.length) { await raiseWalls(segs, true); return; }
+    U.toast('Planimetria in scala');
     sheetMode = 'underlay'; renderSheet();
+  }
+
+  // Dalla planimetria in scala: alzo i muri, creo le stanze e spiego come modificarli
+  async function raiseWalls(segs, scaled) {
+    const ok = await U.confirmDialog(scaled ? 'Planimetria in scala' : 'Muri trovati', 'Ho trovato ' + segs.length + ' tratti di muro. Li alzo come muri esistenti (alti ' + CM.fmt.m(project.settings.wallH || 2.7) + ') e creo le stanze negli spazi chiusi? Puoi annullare in ogni momento.', 'Alza i muri');
+    if (!ok) { sheetMode = 'underlay'; renderSheet(); return; }
+    let n = 0, r = 0;
+    editor.mutate(pl => {
+      n = CM.underlay.applyWalls(pl, segs, 'esistente');
+      const h = project.settings.wallH || 2.7;
+      for (const id in pl.walls) if (pl.walls[id].h == null || pl.walls[id].h === 2.7) pl.walls[id].h = h;
+      try { r = CM.plan.autoRooms(pl); } catch (e) { console.error(e); }
+    }, 'detect');
+    sheetMode = null; editor.select({}); buildTools(); renderSheet(); updateSummary();
+    const go = await U.dialog({
+      title: n + ' muri e ' + r + ' stanze',
+      text: 'Ora la casa \u00e8 in pianta e nel 3D. Per lavorarci: tocca un muro per cambiarne lunghezza e spessore o per segnarlo \u201cda demolire\u201d (giallo) o \u201cnuovo\u201d (rosso); con Muro disegni le pareti nuove; tocca una stanza per darle nome e tipo. Se un muro \u00e8 sbagliato lo selezioni ed Elimina, o usi Cancella zona.',
+      actions: [{ label: 'Resta in pianta', value: false }, { label: 'Guarda in 3D', value: true, primary: true }]
+    });
+    if (go) setTab('3d');
   }
 
   async function onCrop(rect) {
@@ -583,11 +599,7 @@
     try {
       const segs = await CM.underlay.detectWalls(u);
       if (!segs.length) { U.toast('Non trovo muri dritti: prova con un’immagine più nitida o con Gemini'); return; }
-      const ok = await U.confirmDialog('Trovati ' + segs.length + ' tratti di muro', 'Li aggiungo come muri esistenti sopra la planimetria? Poi potrai correggerli, aggiungere porte e chiudere le stanze. Puoi annullare.', 'Aggiungi');
-      if (!ok) return;
-      let n = 0;
-      editor.mutate(pl => { n = CM.underlay.applyWalls(pl, segs, 'esistente'); }, 'detect');
-      U.toast(n + ' muri aggiunti: ora disegna le stanze sopra');
+      await raiseWalls(segs, !!u.calibrated);
     } catch (e) { console.error(e); U.toast('Riconoscimento non riuscito'); }
   }
 
@@ -695,6 +707,7 @@
       { id: 'img', label: 'Immagine della pianta', icon: 'image' },
       { id: 'file', label: 'Esporta il file del progetto', icon: 'opening' },
       { id: 'history', label: 'Storico versioni', icon: 'history' },
+      { id: 'autorooms', label: 'Crea le stanze dai muri', icon: 'room' },
       { id: 'location', label: 'Posizione della casa (sole)', icon: 'sun', right: project.address ? project.address.replace('_', ' ') : '' },
       { id: 'l-arredo', label: 'Mostra arredo', icon: 'sofa', toggle: L.arredo !== false },
       { id: 'l-impianti', label: 'Mostra impianti', icon: 'plug', toggle: L.impianti !== false },
@@ -712,6 +725,12 @@
     switch (choice) {
       case 'variants': return variantsMenu();
       case 'assistant': return CM.share.assistant(project);
+      case 'autorooms': {
+        let r = 0;
+        editor.mutate(pl => { r = CM.plan.autoRooms(pl); }, 'rooms');
+        updateSummary();
+        return U.toast(r ? r + ' stanze create: toccale per dare nome e tipo' : 'Nessuno spazio chiuso nuovo: chiudi i muri o disegna la stanza');
+      }
       case 'share': return CM.share.shareDialog(project);
       case 'pdf': return CM.share.pdf(project);
       case 'img': return CM.share.file('pianta-' + project.name.replace(/\W+/g, '-') + '.png', 'image/png', CM.share.planImage(project), true);

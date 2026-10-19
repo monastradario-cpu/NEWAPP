@@ -66,64 +66,96 @@
         const mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) * (mB - mF);
         if (between > best) { best = between; thr = t; }
       }
-      thr = Math.min(thr, 150);
-      const dark = new Uint8Array(W * H);
-      for (let i = 0; i < W * H; i++) dark[i] = gray[i] < thr ? 1 : 0;
+      thr = Math.min(thr, 160);
+      const merged = U.wallsFromDark(gray.map(g => g < thr ? 1 : 0), W, H);
+      const kx = u.wM / W, ky = u.hM / H;
+      return merged.map(sg => sg.dir === 'h'
+        ? { a: { x: u.x + sg.b0 * kx, y: u.y + sg.mid * ky }, b: { x: u.x + sg.b1 * kx, y: u.y + sg.mid * ky }, t: sg.th * ky }
+        : { a: { x: u.x + sg.mid * kx, y: u.y + sg.b0 * ky }, b: { x: u.x + sg.mid * kx, y: u.y + sg.b1 * ky }, t: sg.th * kx });
+    },
 
-      const minLen = Math.max(12, Math.round(Math.max(W, H) * 0.035));
-      const maxThick = Math.max(4, Math.round(Math.max(W, H) * 0.03));
+    /* Trova i muri dritti in un'immagine binaria (1 = nero).
+       1) chiude le doppie linee e i muri vuoti (catasto) riempiendoli;
+       2) separa le parti orizzontali e verticali con un'apertura a linea;
+       3) ogni blocco connesso diventa un muro (asse + spessore);
+       4) allunga gli estremi fino ai muri perpendicolari. */
+    wallsFromDark(dark, W, H) {
+      const S = Math.max(W, H);
+      const rc = Math.max(2, Math.round(S * 0.006));
+      const L = Math.max(12, Math.round(S * 0.03));
+      const maxThick = Math.max(6, Math.round(S * 0.035));
+      // dilatazione/erosione lungo righe o colonne con finestra [-r1, r2] (somma mobile)
+      const pass = (src, horiz, r1, r2, erode) => {
+        const out = new Uint8Array(W * H);
+        const A = horiz ? H : W, B = horiz ? W : H;
+        for (let a = 0; a < A; a++) {
+          const idx = (b) => horiz ? a * W + b : b * W + a;
+          // prefisso
+          const pre = new Int32Array(B + 1);
+          for (let b = 0; b < B; b++) pre[b + 1] = pre[b] + src[idx(b)];
+          for (let b = 0; b < B; b++) {
+            const lo = Math.max(0, b - r1), hi = Math.min(B - 1, b + r2);
+            const cnt = pre[hi + 1] - pre[lo];
+            out[idx(b)] = erode ? (cnt === (b + r2 - (b - r1) + 1) && b - r1 >= 0 && b + r2 < B ? 1 : 0) : (cnt > 0 ? 1 : 0);
+          }
+        }
+        return out;
+      };
+      // chiusura quadrata (riempie muri disegnati a doppia linea)
+      let m = pass(pass(dark, true, rc, rc, false), false, rc, rc, false);
+      m = pass(pass(m, true, rc, rc, true), false, rc, rc, true);
       const segs = [];
-      // scansione orizzontale e verticale con bande di righe consecutive
-      for (const dir of ['h', 'v']) {
-        const A = dir === 'h' ? H : W, B = dir === 'h' ? W : H;
-        const at = (a, b) => dir === 'h' ? dark[a * W + b] : dark[b * W + a];
-        let open = []; // bande aperte: {a0, a1, b0, b1}
-        for (let a = 0; a <= A; a++) {
-          const runs = [];
-          if (a < A) {
-            let b = 0;
-            while (b < B) {
-              if (at(a, b)) { const s0 = b; while (b < B && at(a, b)) b++; if (b - s0 >= minLen) runs.push([s0, b]); } else b++;
-            }
+      for (const horiz of [true, false]) {
+        // apertura con una linea lunga L: restano solo i tratti orizzontali (o verticali)
+        const half = Math.floor(L / 2);
+        const op = pass(pass(m, horiz, half, L - 1 - half, true), horiz, L - 1 - half, half, false);
+        // componenti connesse
+        const lab = new Int32Array(W * H); let id = 0;
+        const stack = [];
+        for (let i = 0; i < W * H; i++) {
+          if (!op[i] || lab[i]) continue;
+          id++;
+          let x0 = W, x1 = -1, y0 = H, y1 = -1, n = 0;
+          const rowCnt = new Map();
+          stack.push(i); lab[i] = id;
+          while (stack.length) {
+            const j = stack.pop(); const x = j % W, y = (j / W) | 0; n++;
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+            const key = horiz ? y : x; rowCnt.set(key, (rowCnt.get(key) || 0) + 1);
+            if (x > 0 && op[j - 1] && !lab[j - 1]) { lab[j - 1] = id; stack.push(j - 1); }
+            if (x < W - 1 && op[j + 1] && !lab[j + 1]) { lab[j + 1] = id; stack.push(j + 1); }
+            if (y > 0 && op[j - W] && !lab[j - W]) { lab[j - W] = id; stack.push(j - W); }
+            if (y < H - 1 && op[j + W] && !lab[j + W]) { lab[j + W] = id; stack.push(j + W); }
           }
-          const next = [];
-          for (const band of open) {
-            const r = runs.find(r => r[0] < band.b1 - minLen * 0.5 && r[1] > band.b0 + minLen * 0.5);
-            if (r) { band.a1 = a; band.b0 = Math.max(band.b0, r[0]); band.b1 = Math.min(band.b1, r[1]); band.used = r; next.push(band); }
-            else {
-              const th = band.a1 - band.a0 + 1;
-              if (th >= 2 && th <= maxThick && band.b1 - band.b0 >= minLen) segs.push({ dir, mid: (band.a0 + band.a1 + 1) / 2, b0: band.b0, b1: band.b1, th });
-            }
+          const len = horiz ? x1 - x0 + 1 : y1 - y0 + 1;
+          const th = horiz ? y1 - y0 + 1 : x1 - x0 + 1;
+          if (len < L) continue;
+          if (th <= maxThick) {
+            // asse pesato sulle righe piene
+            let sw = 0, sm = 0; rowCnt.forEach((c, k) => { sw += c; sm += c * k; });
+            segs.push({ dir: horiz ? 'h' : 'v', mid: sm / sw + 0.5, b0: horiz ? x0 : y0, b1: (horiz ? x1 : y1) + 1, th });
+          } else {
+            // blocco troppo spesso: lo divido in fasce di righe piene
+            const keys = [...rowCnt.keys()].sort((p, q) => p - q);
+            let band = [];
+            const flush = () => { if (band.length >= 1 && band.length <= maxThick) segs.push({ dir: horiz ? 'h' : 'v', mid: (band[0] + band[band.length - 1] + 1) / 2, b0: horiz ? x0 : y0, b1: (horiz ? x1 : y1) + 1, th: band.length }); band = []; };
+            for (const k of keys) { if (rowCnt.get(k) >= len * 0.6) { if (band.length && k !== band[band.length - 1] + 1) flush(); band.push(k); } else flush(); }
+            flush();
           }
-          for (const r of runs) if (!next.some(b => b.used === r)) next.push({ a0: a, a1: a, b0: r[0], b1: r[1] });
-          next.forEach(b => { delete b.used; });
-          open = next;
         }
       }
-      // unisci segmenti allineati vicini
-      segs.sort((p, q) => p.dir.localeCompare(q.dir) || p.mid - q.mid || p.b0 - q.b0);
-      const merged = [];
-      for (const sg of segs) {
-        const last = merged[merged.length - 1];
-        if (last && last.dir === sg.dir && Math.abs(last.mid - sg.mid) <= 2 && sg.b0 <= last.b1 + maxThick * 2) {
-          last.b1 = Math.max(last.b1, sg.b1); last.th = Math.max(last.th, sg.th);
-        } else merged.push(Object.assign({}, sg));
-      }
       // estendi gli estremi fino ai muri perpendicolari vicini (angoli e incroci)
-      for (const sg of merged) {
-        for (const o of merged) {
+      for (const sg of segs) {
+        for (const o of segs) {
           if (o.dir === sg.dir) continue;
-          const tol = (o.th + sg.th) * 1.5 + 3;
+          const tol = Math.max(o.th, sg.th) + rc * 2 + 2;
           if (sg.mid >= o.b0 - tol && sg.mid <= o.b1 + tol) {
             if (Math.abs(sg.b0 - o.mid) < tol) sg.b0 = o.mid;
             if (Math.abs(sg.b1 - o.mid) < tol) sg.b1 = o.mid;
           }
         }
       }
-      const kx = u.wM / W, ky = u.hM / H;
-      return merged.map(sg => sg.dir === 'h'
-        ? { a: { x: u.x + sg.b0 * kx, y: u.y + sg.mid * ky }, b: { x: u.x + sg.b1 * kx, y: u.y + sg.mid * ky }, t: sg.th * ky }
-        : { a: { x: u.x + sg.mid * kx, y: u.y + sg.b0 * ky }, b: { x: u.x + sg.mid * kx, y: u.y + sg.b1 * ky }, t: sg.th * kx });
+      return segs;
     },
 
     // Muri disegnati con due linee parallele (tipico delle planimetrie catastali): diventano un solo muro
