@@ -100,7 +100,7 @@
         plan: this.plan, view: this.view, width: this.W, height: this.H,
         sel: this.sel, showGrid: s.showGrid !== false, showDims: !!s.showDims,
         draft: this.draft, highlightNodes: this._handleNodes(),
-        layers: s.layers, furnitureWarnings: this.warnings, redraw: () => this.draw()
+        layers: s.layers, furnitureWarnings: this.warnings, redraw: () => this.draw(), pins: this.pins()
       });
       if (this.hooks.onDraw) this.hooks.onDraw(this.view);
     }
@@ -114,6 +114,23 @@
       if (tool !== 'select') this.select({});
       this._emitHint();
       this.draw();
+    }
+
+    // Posizioni delle foto del diario sulla pianta
+    pins() {
+      const plan = this.plan, out = {}, list = (this.project && this.project.diary) || [];
+      for (const d of list) {
+        let p = null;
+        if (d.fixture && plan.fixtures[d.fixture]) p = { x: plan.fixtures[d.fixture].x + 0.25, y: plan.fixtures[d.fixture].y - 0.25 };
+        else if (d.wall && plan.walls[d.wall]) { const w = plan.walls[d.wall], A = plan.nodes[w.a], B = plan.nodes[w.b]; p = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 }; }
+        else if (d.room && plan.rooms[d.room]) { const c = G.labelPoint(P.roomPts(plan, plan.rooms[d.room])); p = { x: c.x + 0.6, y: c.y - 0.5 }; }
+        if (!p) continue;
+        const key = Math.round(p.x * 10) + ':' + Math.round(p.y * 10);
+        if (!out[key]) out[key] = { x: p.x, y: p.y, ids: [], type: d.type };
+        out[key].ids.push(d.id);
+        if (d.type === 'tracce') out[key].type = 'tracce';
+      }
+      return Object.values(out).map(o => Object.assign(o, { count: o.ids.length }));
     }
 
     _checkWarnings() {
@@ -321,6 +338,13 @@
     hitTest(sx, sy) {
       const plan = this.plan, v = this.view;
       const w = this.toWorld(sx, sy);
+      // foto del diario
+      const lay = (this.project.settings && this.project.settings.layers) || {};
+      if (lay.foto !== false) {
+        for (const pin of this.pins()) {
+          if (Math.hypot(v.x + pin.x * v.s - sx, v.y + pin.y * v.s - sy) < 16) return { type: 'pin', ids: pin.ids };
+        }
+      }
       // maniglie
       for (const nid of this._handleNodes()) {
         const n = plan.nodes[nid];
@@ -507,6 +531,7 @@
       // tocco o fine di un tracciamento
       switch (this.tool) {
         case 'select':
+          if (g.hit && g.hit.type === 'pin') { if (this.hooks.onPin) this.hooks.onPin(g.hit.ids); break; }
           this.select(g.hit && g.hit.type !== 'node' ? g.hit : (g.hit && g.hit.type === 'node' ? this.sel : {}));
           break;
         case 'room': this._finishRect(); break;

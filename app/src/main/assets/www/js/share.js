@@ -74,9 +74,11 @@
         if (f.cladding && f.cladding.mat) fin.push('Rivestimento: ' + esc(f.cladding.mat.name) + ' h ' + CM.fmt.cm(r.finish.cladding.height) + ' (' + f.cladding.boxes + ' scatole)');
         if (f.paint) fin.push('Pittura: ' + esc(f.paint.mat.name) + (f.paint.mat.code ? ' ' + esc(f.paint.mat.code) : '') + ' · ' + CM.fmt.num(f.paint.liters, 1) + ' L, ' + f.paint.coats + ' mani');
         if (f.wallpaper) fin.push('Carta da parati: ' + esc(f.wallpaper.mat.name) + ' (' + f.wallpaper.rolls + ' rotoli)');
-        return '<tr><td>' + esc(r.name) + '</td><td class="n">' + CM.fmt.area(st.net) + '</td><td class="n">' + CM.fmt.cm(r.h || 2.7) + '</td><td>' + (fin.join('<br>') || '—') + '</td></tr>';
+        const ws = P.roomWallSurface(plan, r);
+        return '<tr><td>' + esc(r.name) + '</td><td class="n">' + CM.fmt.area(st.net) + '</td><td class="n">' + CM.fmt.cm(r.h || 2.7) + '</td><td class="n">' + CM.fmt.area(ws.net) + '</td><td>' + (fin.join('<br>') || '—') + '</td></tr>';
       });
-      out.push('<section><h2>Stanze e finiture</h2><table><tr><th>Stanza</th><th>Superficie</th><th>Altezza</th><th>Finiture</th></tr>' + rows.join('') + '</table>');
+      const sf = P.surfaceTotals(plan);
+      out.push('<section><h2>Stanze e finiture</h2><table><tr><th>Stanza</th><th>Pavimento</th><th>Altezza</th><th>Pareti nette</th><th>Finiture</th></tr>' + rows.join('') + '<tr class="tot"><td>Totale</td><td class="n">' + CM.fmt.area(sf.floors) + '</td><td></td><td class="n">' + CM.fmt.area(sf.wallsNet) + '</td><td>Soffitti ' + CM.fmt.area(sf.ceilings) + ' · pareti lorde ' + CM.fmt.area(sf.wallsGross) + '</td></tr></table>');
       const norms = CM.norms.check(plan);
       if (norms.length) out.push('<p class="warn">' + norms.map(n => esc(n.text)).join('<br>') + '<br><small>' + esc(CM.norms.NOTE) + '</small></p>');
       out.push('</section>');
@@ -157,9 +159,25 @@
     return [...ids].map(id => CM.lib.material(id)).filter(m => m && !CM.MATERIALS_BASE.includes(m));
   }
 
-  SH.backupAll = function () {
+  SH.backupJSON = function () {
     const projects = CM.store.listProjects().map(s => CM.store.loadProject(s.id)).filter(Boolean);
-    const data = JSON.stringify({ type: 'casamia-backup', version: 2, exported: Date.now(), projects, catalog: CM.store.getJSON('catalogo', []), materials: CM.store.getJSON('materiali', []), prices: CM.store.getJSON('prezzi', {}) });
+    return JSON.stringify({ type: 'casamia-backup', version: 2, exported: Date.now(), projects, catalog: CM.store.getJSON('catalogo', []), materials: CM.store.getJSON('materiali', []), prices: CM.store.getJSON('prezzi', {}) });
+  };
+
+  // Backup automatico settimanale nella cartella Download/CasaMia del telefono
+  SH.autoBackup = function (force) {
+    if (!native() || !native().saveDocument) return false;
+    if (CM.store.pref('backupAuto') === false && !force) return false;
+    const last = CM.store.pref('ultimoBackupAuto') || 0;
+    if (!force && Date.now() - last < 7 * 864e5) return false;
+    if (!CM.store.listProjects().length) return false;
+    const ok = native().saveDocument('CasaMia-backup-automatico.json', 'application/json', b64utf8(SH.backupJSON()));
+    if (ok) CM.store.pref('ultimoBackupAuto', Date.now());
+    return ok;
+  };
+
+  SH.backupAll = function () {
+    const data = SH.backupJSON();
     SH.file('CasaMia-backup-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json', data);
     CM.store.pref('ultimoBackup', Date.now());
     U().toast('Scegli Google Drive per salvare il backup');

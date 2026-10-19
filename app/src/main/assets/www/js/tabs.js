@@ -265,6 +265,17 @@
         el('div', { class: 'card-row small' }, [el('span', { html: '<span class="dot mat"></span>Materiali ' + CM.fmt.eur(c.mat) }), el('span', { html: '<span class="dot lab"></span>Manodopera ' + CM.fmt.eur(c.lab) })])
       ]) : null
     ]));
+    // superfici
+    const sf = P.surfaceTotals(plan);
+    if (sf.rooms) box.appendChild(card([
+      el('div', { class: 'gh-name', text: 'Superfici della casa' }),
+      el('div', { class: 'stats' }, [
+        U().stat('Pavimenti', CM.fmt.area(sf.floors)), U().stat('Pareti nette', CM.fmt.area(sf.wallsNet)),
+        U().stat('Pareti lorde', CM.fmt.area(sf.wallsGross)), U().stat('Soffitti', CM.fmt.area(sf.ceilings)),
+        U().stat('Pareti + soffitti', CM.fmt.area(sf.wallsNet + sf.ceilings))
+      ]),
+      el('div', { class: 'muted small', text: 'Utili per i preventivi: imbiancatura (pareti + soffitti), rasature, pavimenti.' })
+    ]));
     // voci
     box.appendChild(section('Per voce'));
     if (!c.lines.length) box.appendChild(el('div', { class: 'empty', text: 'Segna i muri da demolire o costruire, le aperture nuove, gli impianti, le finiture delle stanze e i prezzi degli arredi: qui comparirà la stima.' }));
@@ -604,6 +615,7 @@
     if (!r) return;
     project.diary.push(v);
     app().save();
+    if (app().editor()) app().editor().draw();
     U().toast('Salvato nel diario');
     if (app().tab() === 'lavori') app().refreshTab();
   };
@@ -622,6 +634,24 @@
       ])
     ]))));
   }
+
+  // Apre le foto collegate a un segnaposto della pianta
+  T.showDiary = function (ids) {
+    const project = app().project();
+    const plan = CM.project.plan(project);
+    const list = project.diary.filter(d => ids.includes(d.id)).sort((a, b) => b.date - a.date);
+    if (!list.length) return;
+    const body = el('div', { class: 'diary' }, list.map(d => el('div', { class: 'diary-item card' }, [
+      d.photo ? el('img', { src: d.photo, alt: d.text || 'Foto', style: 'width:100%;border-radius:12px 12px 0 0;display:block' }) : null,
+      el('div', { class: 'diary-body' }, [
+        el('div', { class: 'card-row' }, [el('span', { class: 'status ' + (d.type === 'tracce' ? 's1' : 's2'), text: d.type === 'tracce' ? 'tracce impianti' : 'avanzamento' }), el('span', { class: 'muted small', text: fmtDate(d.date) })]),
+        d.room && plan.rooms[d.room] ? el('div', { class: 'muted small', text: plan.rooms[d.room].name }) : null,
+        d.text ? el('div', { text: d.text }) : null
+      ])
+    ])));
+    CM.ui.dialog({ title: list.length > 1 ? list.length + ' foto in questo punto' : 'Foto', body, actions: [{ label: 'Apri il diario', value: 'diario' }, { label: 'Chiudi', value: true, primary: true }] })
+      .then(r => { if (r === 'diario') T.showLavori('diario'); });
+  };
 
   function renderPromemoria(box, project) {
     const list = (project.reminders || []).slice().sort((a, b) => a.when - b.when);

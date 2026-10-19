@@ -261,6 +261,7 @@
 
     if (CM.render2 && plan.furniture && layers.arredo !== false) CM.render2.drawFurniture(ctx, v, plan, opts);
     if (CM.render2 && plan.fixtures && layers.impianti !== false) CM.render2.drawFixtures(ctx, v, plan, opts);
+    if (CM.render2 && opts.pins && opts.pins.length && layers.foto !== false && !opts.thumb) CM.render2.drawPins(ctx, v, opts.pins);
 
     if (!opts.thumb) {
       // Muro selezionato

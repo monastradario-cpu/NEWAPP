@@ -486,6 +486,34 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public boolean saveDocument(String name, String mime, String base64) {
+            if (Build.VERSION.SDK_INT >= 29) {
+                try {
+                    android.content.ContentResolver cr = getContentResolver();
+                    Uri coll = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                    String rel = Environment.DIRECTORY_DOWNLOADS + "/CasaMia/";
+                    // sostituisce la copia precedente salvata dall'app
+                    cr.delete(coll, MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + MediaStore.MediaColumns.RELATIVE_PATH + "=?", new String[]{name, rel});
+                    android.content.ContentValues cv = new android.content.ContentValues();
+                    cv.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                    cv.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                    cv.put(MediaStore.MediaColumns.RELATIVE_PATH, rel);
+                    Uri uri = cr.insert(coll, cv);
+                    if (uri == null) return false;
+                    try (OutputStream os = cr.openOutputStream(uri)) {
+                        if (os == null) return false;
+                        os.write(Base64.decode(base64, Base64.DEFAULT));
+                    }
+                    return true;
+                } catch (Exception e) {
+                    Log.e(TAG, "Backup automatico non salvato", e);
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        @JavascriptInterface
         public void openShop(String url) {
             runOnUiThread(() -> shopPanel.open(url));
         }

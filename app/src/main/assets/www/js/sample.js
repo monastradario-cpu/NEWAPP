@@ -85,6 +85,53 @@
       // Struttura: pilastro che resta dopo la demolizione e trave sopra il muro demolito
       plan.columns[CM.uid('c')] = { x: 5.2, y: 4.4, w: 0.30, d: 0.30 };
       plan.beams[CM.uid('b')] = { x1: 5.2, y1: 0.15, x2: 5.2, y2: 4.25, w: 0.30 };
+
+      // Lavori sulle aperture
+      for (const oid in plan.openings) {
+        const op = plan.openings[oid], g = P.openingGeom(plan, op);
+        if (op.kind === 'scorrevole') op.state = 'nuova';
+        if ((op.kind === 'finestra' || op.kind === 'portafinestra') && g.c.y < 0.1) op.state = 'sostituire';
+      }
+
+      // Arredi (se il catalogo è caricato)
+      const base = CM.FURNITURE_BASE || [];
+      const put = (id, x, y, rot) => { const it = base.find(i => i.id === id); if (it) P.addFurniture(plan, it, x, y, rot || 0); };
+      const R = Math.PI / 2;
+      put('mobiletv', 3.6, 4.14, Math.PI); put('divano3', 3.6, 2.0, 0); put('tappeto200', 3.6, 2.9, 0);
+      put('tavolo4', 1.2, 1.3, 0); put('lampterra', 4.85, 1.6, 0);
+      put('k-colfrigo', 8.05, 0.45, R); put('k-lavello120', 8.05, 1.35, R); put('k-base60', 8.05, 2.25, R); put('k-cottura60', 8.05, 2.85, R); put('k-colforno', 8.05, 3.45, R);
+      put('k-pensile60', 8.175, 2.25, R); put('k-cappa', 8.175, 2.85, R);
+      put('letto160', 10.8, 2.2, R); put('comodino', 11.65, 1.1, R); put('comodino', 11.65, 3.3, R); put('armadio4', 8.75, 1.2, -R);
+      put('wc', 0.42, 7.0, -R); put('bidet', 0.42, 7.5, -R); put('lavabo60', 2.12, 6.6, R); put('doccia80', 1.95, 7.45, Math.PI);
+      put('letto90', 4.725, 7.3, R); put('scrivaniacam', 2.75, 7.2, -R);
+      put('scrivania', 7.1, 7.5, Math.PI); put('lavatrice', 11.55, 7.4, R);
+
+      // Impianti
+      const fx = (k, x, y, st) => { const id = P.addFixture(plan, k, x, y); if (st) plan.fixtures[id].state = st; };
+      fx('presa', 5.0, 3.9); fx('presa_tv', 3.0, 4.27); fx('presa', 0.3, 0.5); fx('interruttore', 0.85, 4.27); fx('luce', 2.6, 2.2);
+      fx('termosifone', 2.6, 0.3, 'esistente'); fx('termosifone', 10.2, 0.3, 'esistente'); fx('termosifone', 1.2, 7.7, 'esistente');
+      fx('acqua', 8.25, 1.35); fx('scarico', 8.25, 1.5); fx('acqua', 0.25, 7.0); fx('scarico', 0.25, 7.2); fx('acqua', 11.75, 7.4); fx('scarico', 11.75, 7.6);
+      fx('caldaia', 11.75, 6.2, 'esistente'); fx('quadro', 11.75, 5.0); fx('condizionatore', 11.75, 2.2);
+
+      // Finiture
+      const room = (type) => Object.keys(plan.rooms).find(id => plan.rooms[id].type === type);
+      const fin = (type, f) => { const id = room(type); if (id) plan.rooms[id].finish = f; };
+      fin('soggiorno', { floor: { mat: 'm-parquet-rovere', pose: 'spina' }, paint: { mat: 'm-pittura-salvia', coats: 2 } });
+      fin('cucina', { floor: { mat: 'm-gres-cemento', pose: 'dritta', joint: 2 }, paint: { mat: 'm-pittura-lavabile', coats: 2 }, cladding: { mat: 'm-mosaico', height: 0.6, pose: 'dritta', joint: 2, walls: wallsAlong(plan, 8.4, 0, 8.4, 4.4) } });
+      fin('camera', { floor: { mat: 'm-parquet-rovere', pose: 'dritta' }, paint: { mat: 'm-pittura-grigio', coats: 2 } });
+      fin('bagno', { floor: { mat: 'm-gres-cemento', pose: 'dritta', joint: 2 }, cladding: { mat: 'm-ceramica-bagno', height: 1.2, pose: 'dritta', joint: 2 }, paint: { mat: 'm-pittura-lavabile', coats: 2 } });
+      fin('corridoio', { floor: { mat: 'm-gres-legno', pose: 'sfalsata', joint: 2 }, paint: { mat: 'm-pittura-bianca', coats: 2 } });
+      fin('cameretta', { floor: { mat: 'm-laminato', pose: 'dritta' }, paint: { mat: 'm-pittura-bianca', coats: 2 } });
+      fin('studio', { floor: { mat: 'm-laminato', pose: 'dritta' }, paint: { mat: 'm-pittura-bianca', coats: 2 } });
+      fin('lavanderia', { floor: { mat: 'm-ceramica-bagno', pose: 'diagonale', joint: 2 }, paint: { mat: 'm-pittura-lavabile', coats: 2 } });
+
+      p.budget = { total: 40000, rooms: {} };
+
+      // Seconda variante: cucina chiusa (il muro resta, niente nuovo vano)
+      const v2 = CM.project.addVariant(p, 'Cucina chiusa');
+      for (const id in v2.plan.walls) if (v2.plan.walls[id].state === 'demolire') v2.plan.walls[id].state = 'esistente';
+      v2.plan.beams = {};
+      p.active = p.variants[0].id;
       return p;
     }
   };

@@ -221,7 +221,33 @@
     // perimetro interno approssimato: perimetro netto dalla superficie netta (stessa forma)
     const ratio = st.gross > 0 ? Math.sqrt(st.net / st.gross) : 1;
     const perim = st.perimeter * ratio;
-    return { perimeter: perim, height: h, gross: perim * h, net: Math.max(0, perim * h - openArea), baseboard: Math.max(0, perim - doorWidth), openArea };
+    return { perimeter: perim, height: h, gross: perim * h, net: Math.max(0, perim * h - openArea), baseboard: Math.max(0, perim - doorWidth), openArea, ceiling: st.net, floor: st.net };
+  };
+
+  // Superficie di un singolo muro, per faccia (lunghezza sull'asse x altezza)
+  P.wallSurface = function (plan, wid) {
+    const w = plan.walls[wid];
+    const L = P.wallLen(plan, w), h = w.h || 2.7;
+    let openings = 0, n = 0;
+    for (const oid in plan.openings) {
+      const op = plan.openings[oid];
+      if (op.wall !== wid) continue;
+      const bottom = op.kind === 'finestra' ? (op.sill || 0) : 0;
+      openings += op.w * Math.max(0, Math.min(h, bottom + op.h) - bottom);
+      n++;
+    }
+    return { L, h, gross: L * h, openings, net: Math.max(0, L * h - openings), count: n };
+  };
+
+  // Totali delle superfici interne della casa (esclusi gli esterni)
+  P.surfaceTotals = function (plan) {
+    const t = { wallsGross: 0, wallsNet: 0, openings: 0, ceilings: 0, floors: 0, rooms: 0 };
+    for (const id in plan.rooms) {
+      if (CM.roomType(plan.rooms[id].type).outdoor) continue;
+      const s = P.roomWallSurface(plan, id);
+      t.wallsGross += s.gross; t.wallsNet += s.net; t.openings += s.openArea; t.ceilings += s.ceiling; t.floors += s.floor; t.rooms++;
+    }
+    return t;
   };
 
   P.addNode = function (plan, x, y) {

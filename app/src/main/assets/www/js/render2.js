@@ -98,6 +98,18 @@
       case 'pergola': { rect(-hw, -hd, w, d); ctx.stroke(); const n = Math.max(3, Math.round(w / 0.4)); for (let i = 1; i < n; i++) { const x = -hw + w * i / n; line(x, -hd, x, hd); } break; }
       case 'hedge': rect(-hw, -hd, w, d, Math.min(hw, hd)); ctx.fill(); ctx.stroke(); break;
       case 'car': rect(-hw, -hd, w, d, 0.3); ctx.fill(); ctx.stroke(); rect(-hw + 0.15, -hd + d * 0.28, w - 0.3, d * 0.16, 0.1); ctx.stroke(); rect(-hw + 0.15, hd - d * 0.28, w - 0.3, d * 0.12, 0.1); ctx.stroke(); break;
+      case 'path': {
+        rect(-hw, -hd, w, d); ctx.fill(); ctx.stroke();
+        const n = Math.max(2, Math.round(d / 0.5));
+        for (let i = 0; i < n; i++) { const y = -hd + d * (i + 0.5) / n; ctx.beginPath(); ctx.ellipse((i % 2 ? 0.1 : -0.1) * w, y, w * 0.28, d / n * 0.32, 0, 0, Math.PI * 2); ctx.stroke(); }
+        break;
+      }
+      case 'fence': {
+        line(-hw, 0, hw, 0);
+        const n = Math.max(2, Math.round(w / 1.0));
+        for (let i = 0; i <= n; i++) { const x = -hw + w * i / n; rect(x - 0.04, -0.04, 0.08, 0.08); ctx.fill(); ctx.stroke(); }
+        break;
+      }
       case 'lounger': rect(-hw, -hd, w, d, 0.05); ctx.fill(); ctx.stroke(); line(-hw, -hd + d * 0.3, hw, -hd + d * 0.3); break;
       default: rect(-hw, -hd, w, d); ctx.fill(); ctx.stroke();
     }
@@ -179,5 +191,23 @@
     }
   }
 
-  CM.render2 = { drawUnderlay, drawFurniture, drawFixtures, symbol, hexAlpha };
+  // Segnaposto delle foto (diario e tracce impianti)
+  function drawPins(ctx, v, pins) {
+    for (const pin of pins) {
+      const x = v.x + pin.x * v.s, y = v.y + pin.y * v.s;
+      ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#FFFFFF'; ctx.fill();
+      ctx.lineWidth = 2.5; ctx.strokeStyle = pin.type === 'tracce' ? '#C2410C' : '#1F4FD1'; ctx.stroke();
+      // fotocamera
+      ctx.beginPath(); ctx.rect(x - 6, y - 3.5, 12, 8); ctx.moveTo(x - 2.5, y - 3.5); ctx.lineTo(x - 1.5, y - 5.5); ctx.lineTo(x + 1.5, y - 5.5); ctx.lineTo(x + 2.5, y - 3.5);
+      ctx.lineWidth = 1.4; ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y + 0.5, 2.3, 0, Math.PI * 2); ctx.stroke();
+      if (pin.count > 1) {
+        ctx.beginPath(); ctx.arc(x + 10, y - 10, 7, 0, Math.PI * 2); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = '700 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(pin.count), x + 10, y - 9.5);
+      }
+    }
+  }
+
+  CM.render2 = { drawUnderlay, drawFurniture, drawFixtures, drawPins, symbol, hexAlpha };
 })(typeof window !== 'undefined' ? window : globalThis);

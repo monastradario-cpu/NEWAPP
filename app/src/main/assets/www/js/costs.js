@@ -38,7 +38,29 @@
   /* ---------- Finiture di una stanza ---------- */
   const FN = CM.finish = {};
 
-  function tileCalc(mat, area, pose, prices, isWall) {
+  // Area di pareti scelte fino a una certa altezza, tolte le aperture
+  function wallsArea(plan, wallIds, height) {
+    let width = 0, area = 0;
+    for (const wid of wallIds) {
+      const w = plan.walls[wid];
+      if (!w) continue;
+      const L = P.wallLen(plan, w);
+      const hh = Math.min(height, w.h || 2.7);
+      width += L;
+      let a = L * hh;
+      for (const oid in plan.openings) {
+        const op = plan.openings[oid];
+        if (op.wall !== wid) continue;
+        const b = op.kind === 'finestra' ? (op.sill || 0) : 0;
+        a -= op.w * Math.max(0, Math.min(hh, b + op.h) - Math.min(hh, b));
+      }
+      area += Math.max(0, a);
+    }
+    return { width, area };
+  }
+  FN.wallsArea = wallsArea;
+
+  function tileCalc(mat, area, pose, prices, isWall, joint) {
     const waste = (CM.POSE[pose] || CM.POSE.dritta).waste;
     const out = { mat, area, pose, waste, buyArea: area * (1 + waste), boxes: 0, matCost: 0, lab: 0, extras: [] };
     if (!mat || area <= 0) return out;
@@ -55,7 +77,11 @@
     out.lab = area * (prices[posaKey].lab || 0) + area * (prices[posaKey].mat || 0);
     if (mat.type === 'piastrella') {
       const sacchi = Math.ceil(area * 4 / 25); // ~4 kg/m² di colla, sacchi da 25 kg
-      const kgStucco = Math.ceil(area * 0.4);   // ~0,4 kg/m² di stucco
+      // stucco: kg/m² = (A+B)/(A·B) × spessore × fuga × 1,6 (misure in mm)
+      const A = (mat.tw || 0.3) * 1000, B = (mat.th || 0.3) * 1000, thick = Math.max(A, B) >= 600 ? 10 : 8;
+      const kgM2 = (A + B) / (A * B) * thick * (joint || 3) * 1.6;
+      const kgStucco = Math.max(1, Math.ceil(area * kgM2));
+      out.joint = joint || 3;
       out.extras.push({ label: 'Colla', qty: sacchi, unit: 'sacchi da 25 kg', cost: sacchi * prices.colla.mat });
       out.extras.push({ label: 'Stucco per fughe', qty: kgStucco, unit: 'kg', cost: kgStucco * prices.stucco.mat });
       out.extras.push({ label: 'Distanziatori', qty: Math.ceil(area / 10), unit: 'confezioni', cost: Math.ceil(area / 10) * 4 });
@@ -75,7 +101,7 @@
     // Pavimento
     if (f.floor && f.floor.mat) {
       const mat = L.material(f.floor.mat);
-      const t = tileCalc(mat, st.net, f.floor.pose || 'dritta', prices, false);
+      const t = tileCalc(mat, st.net, f.floor.pose || 'dritta', prices, false, f.floor.joint);
       res.floor = t;
       if (f.baseboard !== false && mat) {
         res.baseboard = { m: ws.baseboard, mat: ws.baseboard * prices.battiscopa.mat, lab: ws.baseboard * prices.battiscopa.lab };
@@ -86,22 +112,24 @@
     if (f.cladding && f.cladding.mat && f.cladding.height > 0) {
       const mat = L.material(f.cladding.mat);
       const hc = Math.min(f.cladding.height, ws.height);
-      cladArea = ws.perimeter * hc - ws.openArea * Math.min(1, hc / ws.height);
-      if (f.cladding.walls && f.cladding.walls.length) cladArea *= Math.min(1, f.cladding.walls.length / Math.max(1, P.roomWalls(plan, room).length));
+      const sel = (f.cladding.walls || []).filter(id => plan.walls[id]);
+      if (sel.length) cladArea = wallsArea(plan, sel, hc).area;
+      else cladArea = ws.perimeter * hc - ws.openArea * Math.min(1, hc / ws.height);
       cladArea = Math.max(0, cladArea);
-      res.cladding = tileCalc(mat, cladArea, f.cladding.pose || 'dritta', prices, true);
+      res.cladding = tileCalc(mat, cladArea, f.cladding.pose || 'dritta', prices, true, f.cladding.joint);
     }
     // Carta da parati
     let paperArea = 0;
     if (f.wallpaper && f.wallpaper.mat) {
       const mat = L.material(f.wallpaper.mat);
       if (mat) {
-        const share = f.wallpaper.share || 1; // frazione di pareti (1 = tutte)
-        const width = ws.perimeter * share;
+        const sel = (f.wallpaper.walls || []).filter(id => plan.walls[id]);
+        let width;
+        if (sel.length) { const wa = wallsArea(plan, sel, ws.height); width = wa.width; paperArea = wa.area; }
+        else { const share = f.wallpaper.share || 1; width = ws.perimeter * share; paperArea = Math.max(0, width * ws.height - ws.openArea * share); }
         const strips = Math.ceil(width / (mat.rollW || 0.53));
         const perRoll = Math.max(1, Math.floor((mat.rollL || 10.05) / (ws.height + (mat.repeat || 0))));
         const rolls = Math.ceil(strips / perRoll);
-        paperArea = Math.max(0, width * ws.height - ws.openArea * share);
         res.wallpaper = { mat, rolls, area: paperArea, matCost: rolls * (mat.price || 0), lab: rolls * prices.carta_lab.lab };
       }
     }

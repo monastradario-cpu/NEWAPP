@@ -101,6 +101,27 @@
     return [{ value: '', label: 'Nessuno' }].concat(list.map(m => ({ value: m.id, label: m.name + (m.price ? ' · ' + CM.fmt.num(m.price, m.price % 1 ? 2 : 0) + (m.type === 'pittura' ? ' €/L' : m.type === 'carta' ? ' €/rotolo' : ' €/m²') : '') }))).concat([{ value: '__new', label: '+ Aggiungi un materiale…' }]);
   }
 
+  // Scelta delle pareti di una stanza (vuoto = tutte)
+  function wallPicker(plan, room, selected, onChange) {
+    const ids = P.roomWalls(plan, room);
+    const pts = P.roomPts(plan, room);
+    const c = CM.geom.centroid(pts);
+    const side = (id) => {
+      const w = plan.walls[id], A = plan.nodes[w.a], B = plan.nodes[w.b];
+      const mx = (A.x + B.x) / 2 - c.x, my = (A.y + B.y) / 2 - c.y;
+      return Math.abs(mx) > Math.abs(my) ? (mx > 0 ? 'destra' : 'sinistra') : (my > 0 ? 'in basso' : 'in alto');
+    };
+    const sel = new Set(selected || []);
+    const box = el('div', { class: 'chips-row wrap', role: 'group', 'aria-label': 'Pareti' });
+    box.appendChild(el('button', { class: 'chip small' + (sel.size === 0 ? ' active' : ''), text: 'Tutte', onclick: () => onChange([]) }));
+    ids.forEach((id, i) => box.appendChild(el('button', {
+      class: 'chip small' + (sel.has(id) ? ' active' : ''), 'aria-pressed': sel.has(id) ? 'true' : 'false',
+      text: 'Parete ' + (i + 1) + ' · ' + side(id) + ' · ' + CM.fmt.num(P.wallLen(plan, id), 2) + ' m',
+      onclick: () => { if (sel.has(id)) sel.delete(id); else sel.add(id); onChange([...sel]); }
+    })));
+    return el('div', { class: 'field full' }, [el('span', { class: 'lbl', text: 'Su quali pareti' }), box]);
+  }
+
   SH.roomFinish = function (sheet, ctx, rid) {
     const plan = ctx.editor.plan;
     const room = plan.rooms[rid];
@@ -117,7 +138,8 @@
     let fl = el('div', { class: 'fields' });
     fl.appendChild(U().selectField('Materiale', matOptions(m => m.cat === 'pavimenti'), (f.floor && f.floor.mat) || '', v => pick(v, 'piastrella', id => mut(fi => { fi.floor = id ? Object.assign({ pose: 'dritta' }, fi.floor, { mat: id }) : null; }))));
     if (f.floor && f.floor.mat && calc.floor && calc.floor.mat && calc.floor.mat.type !== 'resina') {
-      fl.appendChild(U().selectField('Posa', Object.keys(CM.POSE).map(k => ({ value: k, label: CM.POSE[k].label + ' (sfrido ' + Math.round(CM.POSE[k].waste * 100) + '%)' })), f.floor.pose || 'dritta', v => mut(fi => { fi.floor.pose = v; })));
+      fl.appendChild(U().selectField('Posa', Object.keys(CM.POSE).map(k => ({ value: k, label: CM.POSE[k].label + ' (sfrido ' + Math.round(CM.POSE[k].waste * 100) + '%)' })), f.floor.pose || 'dritta', v => mut(fi => { fi.floor.pose = v; }), { full: false }));
+      if (calc.floor && calc.floor.mat && calc.floor.mat.type === 'piastrella') fl.appendChild(U().numField('Fuga', f.floor.joint || 3, 'mm', v => mut(fi => { fi.floor.joint = v; }), { min: 1, max: 20 }));
     }
     sheet.appendChild(fl);
     if (calc.floor && calc.floor.mat) {
@@ -133,7 +155,12 @@
     sheet.appendChild(section('Rivestimento a parete'));
     const cl = el('div', { class: 'fields' });
     cl.appendChild(U().selectField('Piastrelle', matOptions(m => m.cat === 'pavimenti' && m.type === 'piastrella'), (f.cladding && f.cladding.mat) || '', v => pick(v, 'piastrella', id => mut(fi => { fi.cladding = id ? Object.assign({ height: room.type === 'bagno' ? 1.2 : 0.6, pose: 'dritta' }, fi.cladding, { mat: id }) : null; })), { full: false }));
-    if (f.cladding && f.cladding.mat) cl.appendChild(U().numField('Altezza', f.cladding.height || 1.2, 'cm', v => mut(fi => { fi.cladding.height = v; }), { min: 0.1, max: 4 }));
+    if (f.cladding && f.cladding.mat) {
+      cl.appendChild(U().numField('Altezza', f.cladding.height || 1.2, 'cm', v => mut(fi => { fi.cladding.height = v; }), { min: 0.1, max: 4 }));
+      cl.appendChild(U().selectField('Posa', Object.keys(CM.POSE).map(k => ({ value: k, label: CM.POSE[k].label })), f.cladding.pose || 'dritta', v => mut(fi => { fi.cladding.pose = v; }), { full: false }));
+      cl.appendChild(U().numField('Fuga', f.cladding.joint || 2, 'mm', v => mut(fi => { fi.cladding.joint = v; }), { min: 1, max: 20 }));
+      cl.appendChild(wallPicker(plan, room, f.cladding.walls, ids => mut(fi => { fi.cladding.walls = ids; })));
+    }
     sheet.appendChild(cl);
     if (calc.cladding && calc.cladding.mat) sheet.appendChild(el('div', { class: 'calc', html: CM.fmt.area(calc.cladding.area) + ' · <b>' + calc.cladding.boxes + ' scatole</b> · <b>' + CM.fmt.eur(calc.cladding.matCost + calc.cladding.lab) + '</b>' }));
 
@@ -153,7 +180,7 @@
     sheet.appendChild(section('Carta da parati'));
     const wp = el('div', { class: 'fields' });
     wp.appendChild(U().selectField('Carta', matOptions(m => m.type === 'carta'), (f.wallpaper && f.wallpaper.mat) || '', v => pick(v, 'carta', id => mut(fi => { fi.wallpaper = id ? Object.assign({ share: 1 }, fi.wallpaper, { mat: id }) : null; })), { full: false }));
-    if (f.wallpaper && f.wallpaper.mat) wp.appendChild(U().selectField('Pareti', [{ value: '1', label: 'Tutte' }, { value: '0.5', label: 'Metà' }, { value: '0.25', label: 'Una parete' }], String(f.wallpaper.share || 1), v => mut(fi => { fi.wallpaper.share = +v; }), { full: false }));
+    if (f.wallpaper && f.wallpaper.mat) wp.appendChild(wallPicker(plan, room, f.wallpaper.walls, ids => mut(fi => { fi.wallpaper.walls = ids; fi.wallpaper.share = 1; })));
     sheet.appendChild(wp);
     if (calc.wallpaper) sheet.appendChild(el('div', { class: 'calc', html: '<b>' + calc.wallpaper.rolls + ' rotoli</b> · ' + CM.fmt.area(calc.wallpaper.area) + ' · <b>' + CM.fmt.eur(calc.wallpaper.matCost + calc.wallpaper.lab) + '</b>' }));
 

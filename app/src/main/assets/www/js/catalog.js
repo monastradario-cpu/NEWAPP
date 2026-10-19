@@ -118,7 +118,11 @@
     F('pergola', 'Pergola', 'esterni', 3.00, 4.00, 2.50, 'pergola', '#8A7A66'),
     F('gazebo', 'Gazebo', 'esterni', 3.00, 3.00, 2.70, 'pergola', '#E7DCC4'),
     F('auto', 'Automobile', 'esterni', 1.85, 4.40, 1.50, 'car', '#7A8FA6'),
-    F('barbecue', 'Barbecue', 'esterni', 1.20, 0.60, 1.10, 'cabinet', '#3A3F46')
+    F('barbecue', 'Barbecue', 'esterni', 1.20, 0.60, 1.10, 'cabinet', '#3A3F46'),
+    F('vialetto', 'Vialetto', 'esterni', 1.00, 4.00, 0.03, 'path', '#C9C2B4'),
+    F('recinzione', 'Recinzione', 'esterni', 3.00, 0.06, 1.20, 'fence', '#8A7A66'),
+    F('cancello', 'Cancello', 'esterni', 3.00, 0.08, 1.60, 'fence', '#3A3F46'),
+    F('aiuola', 'Aiuola', 'esterni', 2.00, 0.80, 0.30, 'hedge', '#7FA05F')
   ];
 
   /* ---------- Materiali base (prezzi indicativi, modificabili) ---------- */

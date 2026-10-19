@@ -54,6 +54,32 @@
       }
       x.strokeStyle = 'rgba(255,255,255,0.75)'; x.lineWidth = 4;
       for (let i = 0; i <= n; i++) { x.beginPath(); x.moveTo(i * 256, 0); x.lineTo(i * 256, 512); x.moveTo(0, i * 256); x.lineTo(512, i * 256); x.stroke(); }
+    } else if (kind === 'herringbone') {
+      // spina di pesce (a spina "francese": doghe a 45° in colonne alternate)
+      const colW = 128, W = 30, L = colW / Math.SQRT1_2, step = W / Math.SQRT1_2;
+      for (let col = 0; col < 4; col++) {
+        x.save();
+        x.beginPath(); x.rect(col * colW, 0, colW, 512); x.clip();
+        for (let y = -step * 3; y < 512 + step * 3; y += step) {
+          x.save();
+          x.translate(col * colW + colW / 2, y);
+          x.rotate((col % 2 ? 1 : -1) * Math.PI / 4);
+          x.fillStyle = shade(color, 0.86 + r() * 0.24);
+          x.fillRect(-L / 2, -W / 2, L, W);
+          x.strokeStyle = shade(color, 0.62); x.lineWidth = 2; x.strokeRect(-L / 2, -W / 2, L, W);
+          x.restore();
+        }
+        x.restore();
+      }
+    } else if (kind === 'tile_offset') {
+      for (let j = 0; j < 4; j++) {
+        const off = (j % 2) * 128;
+        for (let i = -1; i < 3; i++) {
+          x.fillStyle = shade(color, 0.94 + r() * 0.09);
+          x.fillRect(i * 256 + off, j * 128, 256, 128);
+          x.strokeStyle = 'rgba(255,255,255,0.75)'; x.lineWidth = 4; x.strokeRect(i * 256 + off, j * 128, 256, 128);
+        }
+      }
     } else if (kind === 'grass') {
       for (let i = 0; i < 9000; i++) { x.fillStyle = shade(color, 0.75 + r() * 0.5); x.fillRect(r() * 512, r() * 512, 2, 3); }
     } else if (kind === 'water') {
@@ -266,22 +292,40 @@
       if (!m && room.type === 'giardino') { const t = canvasTexture('grass', '#7FA05F'); t.repeat.set(0.5, 0.5); return new T.MeshStandardMaterial({ map: t, roughness: 1 }); }
       if (!m && room.type === 'box') { const t = canvasTexture('concrete', '#C9C7C2'); t.repeat.set(0.3, 0.3); return new T.MeshStandardMaterial({ map: t, roughness: 1 }); }
       if (!m) return new T.MeshStandardMaterial({ color: '#E8E2D6', roughness: 0.9 });
+      return new T.MeshStandardMaterial({ map: this._surfaceTexture(m, f.pose, redraw), roughness: m.tex === 'marble' ? 0.35 : 0.75 });
+    }
+
+    // Texture di un materiale tenendo conto del tipo di posa
+    _surfaceTexture(m, pose, redraw) {
       let tex;
-      if (m.img) { tex = imageTexture(m.img, redraw); tex.repeat.set(1 / (m.tw || 0.6), 1 / (m.th || 0.6)); }
-      else {
-        tex = canvasTexture(m.tex || 'plain', m.color);
+      pose = pose || 'dritta';
+      if (m.img) {
+        tex = imageTexture(m.img, redraw);
+        tex = tex.clone(); tex.needsUpdate = true;
+        tex.repeat.set(1 / (m.tw || 0.6), 1 / (m.th || 0.6));
+      } else if (pose === 'spina' && (m.tex === 'wood' || m.tex === 'tile' || m.tex === 'marble')) {
+        tex = canvasTexture('herringbone', m.color).clone(); tex.needsUpdate = true;
+        const plank = Math.max(m.tw || 0.1, 0.06);
+        tex.repeat.set(1 / (plank * 4 * 1.2), 1 / (plank * 4 * 1.2));
+      } else if (pose === 'sfalsata' && (m.tex === 'tile' || m.tex === 'marble')) {
+        tex = canvasTexture('tile_offset', m.color).clone(); tex.needsUpdate = true;
+        tex.repeat.set(1 / ((m.th || 0.6) * 2), 1 / ((m.tw || 0.6) * 4));
+      } else {
+        tex = canvasTexture(m.tex || 'plain', m.color).clone(); tex.needsUpdate = true;
         if (m.tex === 'wood') tex.repeat.set(1 / ((m.tw || 0.2) * 4), 1 / ((m.th || 1.2) * 1.2));
         else if (m.tex === 'tile' || m.tex === 'marble') tex.repeat.set(1 / ((m.tw || 0.6) * 2), 1 / ((m.th || 0.6) * 2));
         else tex.repeat.set(0.5, 0.5);
       }
-      return new T.MeshStandardMaterial({ map: tex, roughness: m.tex === 'marble' ? 0.35 : 0.75 });
+      if (pose === 'diagonale') { tex.center.set(0.5, 0.5); tex.rotation = Math.PI / 4; }
+      return tex;
     }
 
-    _wallFaceMaterial(roomId) {
+    _wallFaceMaterial(roomId, wallId) {
       const T = window.THREE;
       const room = roomId && this.plan.rooms[roomId];
       const f = room && room.finish;
-      if (f && f.wallpaper && f.wallpaper.mat) {
+      const onWall = (sel) => !sel || !sel.length || sel.includes(wallId);
+      if (f && f.wallpaper && f.wallpaper.mat && onWall(f.wallpaper.walls)) {
         const m = CM.lib.material(f.wallpaper.mat);
         if (m) { const t = canvasTexture(m.tex || 'stripes', m.color); t.repeat.set(1 / 0.53 / 8 * 8 / 4, 0.4); return new T.MeshStandardMaterial({ map: t, roughness: 0.9 }); }
       }
@@ -303,7 +347,7 @@
       const top = mat({ color: '#D9D6CF' });
       const edge = mat({ color: w.state === 'nuovo' && this.phase === 'dopo' ? '#EDE6E1' : '#E3E0DA' });
       // BoxGeometry: +x,-x,+y,-y,+z,-z. Lunghezza su x, altezza y, spessore z; +z locale = lato n
-      const mats = [edge, edge, top, top, this._wallFaceMaterial(roomPlus), this._wallFaceMaterial(roomMinus)];
+      const mats = [edge, edge, top, top, this._wallFaceMaterial(roomPlus, id), this._wallFaceMaterial(roomMinus, id)];
       const ops = Object.values(plan.openings).filter(o => o.wall === id).sort((a, b) => a.pos - b.pos);
       const ext = w.t / 2;
       const pieces = [];
@@ -336,11 +380,14 @@
           const cl = r && r.finish && r.finish.cladding;
           const cm = cl && cl.mat && CM.lib.material(cl.mat);
           if (!cm || !(cl.height > y0)) continue;
+          if (cl.walls && cl.walls.length && !cl.walls.includes(id)) continue;
           const ch = Math.min(cl.height, y1) - y0;
           if (ch <= 0) continue;
-          const tex = cm.img ? imageTexture(cm.img, () => { this.dirty = true; }) : canvasTexture(cm.tex || 'tile', cm.color);
-          tex.repeat.set(1 / ((cm.tw || 0.2) * 2), 1 / ((cm.th || 0.2) * 2));
+          const tex = this._surfaceTexture(cm, cl.pose, () => { this.dirty = true; });
           const geo = new T.PlaneGeometry(len, ch);
+          // UV in metri, così la piastrella ha la sua misura reale
+          const uv = geo.attributes.uv;
+          for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * len, uv.getY(k) * ch);
           const pm = new T.Mesh(geo, new T.MeshStandardMaterial({ map: tex, roughness: 0.4 }));
           const off = side * (w.t / 2 + 0.004);
           pm.position.set(A.x + u.x * c + n.x * off, y0 + ch / 2, A.y + u.y * c + n.y * off);
@@ -474,6 +521,14 @@
         case 'pergola': for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(0.1, H, 0.1, sx * (W / 2 - 0.05), H / 2, sz * (D / 2 - 0.05), wood); { const n = Math.max(3, Math.round(W / 0.4)); for (let i = 0; i <= n; i++) box(0.05, 0.12, D, -W / 2 + W * i / n, H, 0, wood); } break;
         case 'hedge': box(W, H, D, 0, H / 2, 0, mat({ color: '#5E8C61' })); break;
         case 'car': box(W, H * 0.45, D, 0, 0.15 + H * 0.225, 0); box(W * 0.9, H * 0.35, D * 0.5, 0, 0.15 + H * 0.45 + H * 0.175, -D * 0.05, mat({ color: '#2F3A46' })); break;
+        case 'path': box(W, 0.03, D, 0, 0.015, 0, mat({ color: col, roughness: 1 })); break;
+        case 'fence': {
+          const n = Math.max(2, Math.round(W / 1.0));
+          for (let i = 0; i <= n; i++) box(0.07, H, 0.07, -W / 2 + W * i / n, H / 2, 0);
+          box(W, 0.06, 0.04, 0, H * 0.85, 0); box(W, 0.06, 0.04, 0, H * 0.35, 0);
+          if (col === '#3A3F46') for (let i = 0; i < Math.round(W / 0.12); i++) box(0.02, H * 0.9, 0.02, -W / 2 + 0.06 + i * 0.12, H * 0.45, 0);
+          break;
+        }
         case 'lounger': box(W, 0.3, D, 0, 0.15, 0); box(W, 0.06, D * 0.35, 0, 0.45, -D / 2 + D * 0.17); break;
         default: box(W, H, D, 0, H / 2, 0);
       }

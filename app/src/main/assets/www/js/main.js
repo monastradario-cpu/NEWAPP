@@ -324,10 +324,18 @@
       }
       fields.appendChild(U.numField('Altezza soffitto', room.h || 2.7, 'cm', v => mut(pl => { pl.rooms[sel.id].h = v; }), { min: 1.5, max: 8 }));
       sheet.appendChild(fields);
+      const ws = P.roomWallSurface(plan, room);
       sheet.appendChild(el('div', { class: 'stats' }, [
-        U.stat('Superficie netta', CM.fmt.area(st.net)), U.stat('Lorda (asse muri)', CM.fmt.area(st.gross)),
+        U.stat('Pavimento netto', CM.fmt.area(st.net)), U.stat('Lorda (asse muri)', CM.fmt.area(st.gross)),
         U.stat('Perimetro', CM.fmt.m(st.perimeter)), U.stat('Volume', CM.fmt.num(st.net * (room.h || 2.7), 1) + ' m³')
       ]));
+      sheet.appendChild(el('div', { class: 'sec-title', text: 'Superfici delle pareti' }));
+      sheet.appendChild(el('div', { class: 'stats' }, [
+        U.stat('Pareti lorde', CM.fmt.area(ws.gross)), U.stat('Pareti nette', CM.fmt.area(ws.net)),
+        U.stat('Porte e finestre', CM.fmt.area(ws.openArea)), U.stat('Soffitto', CM.fmt.area(ws.ceiling)),
+        U.stat('Pareti + soffitto', CM.fmt.area(ws.net + ws.ceiling))
+      ]));
+      sheet.appendChild(el('div', { class: 'muted small', style: 'margin-top:6px', text: 'Pareti nette = perimetro interno × altezza, meno porte e finestre: è la superficie da imbiancare o rivestire.' }));
       const nw = CM.norms.check(plan).filter(n => n.room === sel.id);
       if (nw.length) sheet.appendChild(el('div', { class: 'warn-box', html: nw.map(n => n.text).join('<br>') + '<br><small>' + CM.norms.NOTE + '</small>' }));
       const roomWalls = P.roomWalls(plan, room);
@@ -352,7 +360,12 @@
       fields.appendChild(U.segField('Stato', Object.keys(CM.WALL_STATES).map(k => ({ value: k, label: CM.WALL_STATES[k].label, dot: k })), w.state, v => mut(pl => { pl.walls[sel.id].state = v; }, 'state')));
       sheet.appendChild(fields);
       const ops = Object.keys(plan.openings).filter(o => plan.openings[o].wall === sel.id).length;
-      sheet.appendChild(el('div', { class: 'stats' }, [U.stat('Superficie parete', CM.fmt.area(L * (w.h || 2.7))), U.stat('Aperture', String(ops))]));
+      const wsf = P.wallSurface(plan, sel.id);
+      sheet.appendChild(el('div', { class: 'stats' }, [
+        U.stat('Lorda per faccia', CM.fmt.area(wsf.gross)), U.stat('Netta per faccia', CM.fmt.area(wsf.net)),
+        U.stat('Netta, due facce', CM.fmt.area(wsf.net * 2)), U.stat('Aperture', ops + ' · ' + CM.fmt.area(wsf.openings))
+      ]));
+      sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn', text: 'Vista frontale (prospetto)', onclick: () => CM.elevation && CM.elevation.open(editor.plan, sel.id) })]));
       sheet.appendChild(el('div', { class: 'actions' }, [
         el('button', { class: 'btn', text: 'Foto delle tracce', onclick: () => CM.tabs.addDiary({ type: 'tracce', wall: sel.id, room: P.roomOf(plan, { x: (plan.nodes[w.a].x + plan.nodes[w.b].x) / 2, y: (plan.nodes[w.a].y + plan.nodes[w.b].y) / 2 }) || '' }) }),
         el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina muro', onclick: () => editor.deleteSelection() })
@@ -594,6 +607,7 @@
       { id: 'l-arredo', label: 'Mostra arredo', icon: 'sofa', toggle: L.arredo !== false },
       { id: 'l-impianti', label: 'Mostra impianti', icon: 'plug', toggle: L.impianti !== false },
       { id: 'l-plan', label: 'Mostra planimetria', icon: 'image', toggle: L.planimetria !== false },
+      { id: 'l-foto', label: 'Mostra foto e tracce', icon: 'camera', toggle: L.foto !== false },
       { id: 'dims', label: 'Quote dei muri', icon: 'ruler', toggle: !!s.showDims },
       { id: 'grid', label: 'Griglia', icon: 'grid', toggle: s.showGrid !== false },
       { id: 'thick', label: 'Spessore dei nuovi muri', icon: 'thick', right: Math.round(s.wallT * 100) + ' cm' },
@@ -615,6 +629,7 @@
       case 'l-arredo': L.arredo = L.arredo === false; return redraw();
       case 'l-impianti': L.impianti = L.impianti === false; return redraw();
       case 'l-plan': L.planimetria = L.planimetria === false; return redraw();
+      case 'l-foto': L.foto = L.foto === false; return redraw();
       case 'dims': s.showDims = !s.showDims; return redraw();
       case 'grid': s.showGrid = s.showGrid === false; return redraw();
       case 'help': return U.tutorial();
@@ -810,7 +825,8 @@
       onHistory: (u, r) => { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
       onToast: (t) => U.toast(t),
       onDraw: (view) => updateScale(view),
-      onCalibrate
+      onCalibrate,
+      onPin: (ids) => CM.tabs.showDiary(ids)
     });
 
     $('newProject').addEventListener('click', () => newProject(false));
@@ -820,6 +836,7 @@
       const c = await U.menu('Casa Mia', [
         { id: 'open', label: 'Apri un file di progetto o backup', icon: 'opening' },
         { id: 'backup', label: 'Backup su Drive', icon: 'share' },
+        { id: 'autobackup', label: 'Backup automatico settimanale', icon: 'history', toggle: S.pref('backupAuto') !== false },
         { id: 'ai', label: 'Assistente Gemini', icon: 'spark', right: CM.ai.enabled() ? 'attivo' : '' },
         { id: 'prices', label: 'Prezzi di riferimento', icon: 'euro' },
         { id: 'shop', label: 'Ricontrolla i prezzi dei negozi', icon: 'history' },
@@ -828,6 +845,12 @@
       ]);
       if (c === 'open') { const r = await CM.share.importFile(); if (r) { renderHome(); if (r.project) openProject(r.project); } }
       if (c === 'backup') CM.share.backupAll();
+      if (c === 'autobackup') {
+        const on = S.pref('backupAuto') === false;
+        S.pref('backupAuto', on);
+        if (on) { const ok = CM.share.autoBackup(true); U.dialog({ title: 'Backup automatico attivo', text: 'Ogni settimana salvo una copia di tutti i progetti in Download/CasaMia sul telefono' + (ok ? ' (fatto ora).' : '.') + ' Per averla anche su Google Drive puoi sincronizzare quella cartella o usare \u201cBackup su Drive\u201d.' }); }
+        else U.toast('Backup automatico disattivato');
+      }
       if (c === 'ai') CM.share.aiSettings();
       if (c === 'prices') CM.tabs.pricesDialog();
       if (c === 'shop') CM.shop.refreshPrices();
@@ -872,6 +895,7 @@
     if (S.isNative) {
       setTimeout(() => checkUpdate(false), 2500);
       setTimeout(() => CM.shop.syncWatch(), 4000);
+      setTimeout(() => { try { if (CM.share.autoBackup(false)) U.toast('Backup automatico salvato in Download/CasaMia'); } catch (e) { console.error(e); } }, 6000);
     }
   }
 
