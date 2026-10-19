@@ -47,7 +47,16 @@
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
     fit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
-    dots: '<circle cx="12" cy="5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="19" r="1.3"/>'
+    dots: '<circle cx="12" cy="5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="19" r="1.3"/>',
+    sofa: '<path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"/><path d="M3 13a2 2 0 0 1 4 0v2h10v-2a2 2 0 0 1 4 0v5H3z"/>',
+    plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
+    camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+    share: '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/>',
+    history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/>',
+    euro: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5a4 4 0 1 0 0 7M7 11h6M7 13.5h6"/>'
   };
   function icon(name, size) {
     size = size || 20;
@@ -68,7 +77,7 @@
   const stack = [];
   function openOverlay(content, onClose) {
     const ov = document.getElementById('overlay');
-    ov.innerHTML = '';
+    if (ov.firstChild) ov.firstChild.style.display = 'none';
     ov.appendChild(content);
     ov.classList.remove('hidden');
     const entry = { content, onClose };
@@ -81,8 +90,9 @@
   function closeOverlay(result) {
     const entry = stack.pop();
     const ov = document.getElementById('overlay');
-    ov.classList.add('hidden');
-    ov.innerHTML = '';
+    if (entry && entry.content.parentNode === ov) ov.removeChild(entry.content);
+    if (stack.length) stack[stack.length - 1].content.style.display = '';
+    else { ov.classList.add('hidden'); ov.innerHTML = ''; }
     if (entry && entry.onClose) entry.onClose(result);
     return !!entry;
   }
@@ -215,5 +225,5 @@
     openOverlay(box, (r) => { if (onDone) onDone(r); });
   }
 
-  CM.ui = { el, icon, toast, dialog, confirmDialog, promptDialog, menu, closeOverlay, overlayOpen, numField, textField, selectField, segField, stat, tutorial };
+  CM.ui = { el, icon, toast, openOverlay, dialog, confirmDialog, promptDialog, menu, closeOverlay, overlayOpen, numField, textField, selectField, segField, stat, tutorial };
 })(typeof window !== 'undefined' ? window : globalThis);

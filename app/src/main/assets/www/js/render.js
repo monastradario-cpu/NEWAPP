@@ -194,6 +194,8 @@
     ctx.fillStyle = C.paper;
     ctx.fillRect(0, 0, W, H);
     if (opts.showGrid && !opts.thumb) drawGrid(ctx, v, W, H);
+    const layers = opts.layers || { arredo: true, impianti: true, planimetria: true };
+    if (plan.underlay && layers.planimetria !== false && !opts.thumb && CM.render2) CM.render2.drawUnderlay(ctx, v, plan.underlay, opts.redraw);
 
     // Stanze
     for (const id in plan.rooms) {
@@ -203,6 +205,8 @@
       polyPath(ctx, v, pts);
       ctx.fillStyle = CM.roomType(room.type).fill;
       ctx.fill();
+      const fm = room.finish && room.finish.floor && CM.lib && CM.lib.material(room.finish.floor.mat);
+      if (fm && CM.render2) { ctx.fillStyle = CM.render2.hexAlpha(fm.color, 0.28); ctx.fill(); }
       if (sel.type === 'room' && sel.id === id) {
         ctx.fillStyle = C.accentSoft; ctx.fill();
       }
@@ -254,6 +258,9 @@
       }
       if (sel.type === 'column' && sel.id === id) { ctx.strokeStyle = C.accent; ctx.lineWidth = 2; ctx.strokeRect(p.x - 3, p.y - 3, w + 6, h + 6); }
     }
+
+    if (CM.render2 && plan.furniture && layers.arredo !== false) CM.render2.drawFurniture(ctx, v, plan, opts);
+    if (CM.render2 && plan.fixtures && layers.impianti !== false) CM.render2.drawFixtures(ctx, v, plan, opts);
 
     if (!opts.thumb) {
       // Muro selezionato

@@ -118,7 +118,11 @@
     { id: 'studio', label: 'Studio', fill: '#F1EDF3' },
     { id: 'ripostiglio', label: 'Ripostiglio', fill: '#F0EFEA' },
     { id: 'lavanderia', label: 'Lavanderia', fill: '#E7F0F2' },
-    { id: 'balcone', label: 'Balcone / terrazzo', fill: '#EBF1E6' },
+    { id: 'balcone', label: 'Balcone / terrazzo', fill: '#EBF1E6', outdoor: true },
+    { id: 'veranda', label: 'Veranda', fill: '#EEF1EA', outdoor: true },
+    { id: 'giardino', label: 'Giardino', fill: '#E3EDD9', outdoor: true },
+    { id: 'piscina', label: 'Piscina', fill: '#D5E8EF', outdoor: true },
+    { id: 'box', label: 'Box / posto auto', fill: '#ECEBE7', outdoor: true },
     { id: 'altro', label: 'Altro', fill: '#F3F2EE' }
   ];
   CM.roomType = (id) => CM.ROOM_TYPES.find(t => t.id === id) || CM.ROOM_TYPES[CM.ROOM_TYPES.length - 1];
@@ -142,7 +146,83 @@
   const NODE_EPS = 0.005; // 5 mm
   const P = CM.plan = {};
 
-  P.create = () => ({ nodes: {}, walls: {}, rooms: {}, openings: {}, columns: {}, beams: {} });
+  P.create = () => ({ nodes: {}, walls: {}, rooms: {}, openings: {}, columns: {}, beams: {}, furniture: {}, fixtures: {}, underlay: null });
+
+  // Completa piante salvate con versioni precedenti
+  P.normalize = function (plan) {
+    for (const k of ['nodes', 'walls', 'rooms', 'openings', 'columns', 'beams', 'furniture', 'fixtures']) if (!plan[k]) plan[k] = {};
+    if (plan.underlay === undefined) plan.underlay = null;
+    for (const id in plan.openings) if (!plan.openings[id].state) plan.openings[id].state = 'esistente';
+    for (const id in plan.rooms) if (!plan.rooms[id].finish) plan.rooms[id].finish = {};
+    return plan;
+  };
+
+  /* ----- Mobili ----- */
+  P.furnitureCorners = function (f) {
+    const c = Math.cos(f.rot || 0), s = Math.sin(f.rot || 0);
+    const hw = f.w / 2, hd = f.d / 2;
+    return [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([x, y]) => ({ x: f.x + x * c - y * s, y: f.y + x * s + y * c }));
+  };
+  P.addFurniture = function (plan, item, x, y, rot) {
+    const id = CM.uid('f');
+    plan.furniture[id] = {
+      item: item.id || null, name: item.name, cat: item.cat || 'altro', shape: item.shape || 'box',
+      x: r3(x), y: r3(y), w: item.w, d: item.d, h: item.h, elev: item.elev || 0, rot: rot || 0,
+      color: item.color || '#D9D4CB', price: item.price != null ? item.price : null, store: item.store || '',
+      url: item.url || '', img: item.img || '', light: !!item.light
+    };
+    return id;
+  };
+  P.pointInFurniture = function (f, p) {
+    const c = Math.cos(-(f.rot || 0)), s = Math.sin(-(f.rot || 0));
+    const dx = p.x - f.x, dy = p.y - f.y;
+    const lx = dx * c - dy * s, ly = dx * s + dy * c;
+    return Math.abs(lx) <= f.w / 2 && Math.abs(ly) <= f.d / 2;
+  };
+
+  /* ----- Impianti ----- */
+  P.addFixture = function (plan, kind, x, y) {
+    const id = CM.uid('i');
+    plan.fixtures[id] = { kind, x: r3(x), y: r3(y), rot: 0, state: 'nuovo' };
+    return id;
+  };
+
+  /* ----- Stanza: muri sul perimetro e superfici ----- */
+  P.roomWalls = function (plan, room) {
+    if (typeof room === 'string') room = plan.rooms[room];
+    return Object.keys(plan.walls).filter(id => {
+      const w = plan.walls[id];
+      const A = plan.nodes[w.a], B = plan.nodes[w.b];
+      if (!A || !B) return false;
+      return [A, B, { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 }].every(p => P.pointOnRoomBoundary(plan, room, p));
+    });
+  };
+  P.roomOf = function (plan, p) {
+    let best = null, bestA = Infinity;
+    for (const id in plan.rooms) {
+      const pts = P.roomPts(plan, plan.rooms[id]);
+      if (pts.length >= 3 && G.inPoly(p, pts)) { const a = Math.abs(G.signedArea(pts)); if (a < bestA) { bestA = a; best = id; } }
+    }
+    return best;
+  };
+  // Superficie delle pareti interne di una stanza (netta delle aperture) e lunghezza utile del battiscopa
+  P.roomWallSurface = function (plan, room) {
+    if (typeof room === 'string') room = plan.rooms[room];
+    const st = P.roomStats(plan, room);
+    const h = room.h || 2.7;
+    let openArea = 0, doorWidth = 0;
+    const walls = P.roomWalls(plan, room);
+    for (const oid in plan.openings) {
+      const op = plan.openings[oid];
+      if (!walls.includes(op.wall)) continue;
+      openArea += op.w * Math.min(op.h, h);
+      if (op.kind !== 'finestra') doorWidth += op.w;
+    }
+    // perimetro interno approssimato: perimetro netto dalla superficie netta (stessa forma)
+    const ratio = st.gross > 0 ? Math.sqrt(st.net / st.gross) : 1;
+    const perim = st.perimeter * ratio;
+    return { perimeter: perim, height: h, gross: perim * h, net: Math.max(0, perim * h - openArea), baseboard: Math.max(0, perim - doorWidth), openArea };
+  };
 
   P.addNode = function (plan, x, y) {
     const id = CM.uid('n');
@@ -269,7 +349,8 @@
       nodes: nodeIds.slice(),
       name: props.name || CM.roomType(type).label,
       type,
-      h: props.h != null ? props.h : 2.7
+      h: props.h != null ? props.h : 2.7,
+      finish: {}
     };
     return id;
   };
@@ -405,7 +486,7 @@
   P.addOpening = function (plan, wid, pos, kind) {
     const def = CM.OPENINGS[kind] || CM.OPENINGS.battente;
     const id = CM.uid('o');
-    plan.openings[id] = { wall: wid, pos: r3(pos), kind, w: def.w, h: def.h, sill: def.sill, flipSide: false, flipHinge: false };
+    plan.openings[id] = { wall: wid, pos: r3(pos), kind, w: def.w, h: def.h, sill: def.sill, flipSide: false, flipHinge: false, state: 'esistente' };
     P.clampOpening(plan, id);
     return id;
   };
@@ -484,7 +565,7 @@
     let gross = 0, net = 0, rooms = 0, outdoor = 0;
     for (const id in plan.rooms) {
       const s = P.roomStats(plan, plan.rooms[id]);
-      if (plan.rooms[id].type === 'balcone') { outdoor += s.net; continue; }
+      if (CM.roomType(plan.rooms[id].type).outdoor) { outdoor += s.net; continue; }
       gross += s.gross; net += s.net; rooms++;
     }
     return { gross, net, rooms, outdoor };
@@ -496,6 +577,11 @@
     for (const id in plan.nodes) add(plan.nodes[id].x, plan.nodes[id].y);
     for (const id in plan.columns) { const c = plan.columns[id]; add(c.x - c.w / 2, c.y - c.d / 2); add(c.x + c.w / 2, c.y + c.d / 2); }
     for (const id in plan.beams) { const b = plan.beams[id]; add(b.x1, b.y1); add(b.x2, b.y2); }
+    for (const id in (plan.furniture || {})) for (const c of P.furnitureCorners(plan.furniture[id])) add(c.x, c.y);
+    for (const id in (plan.fixtures || {})) add(plan.fixtures[id].x, plan.fixtures[id].y);
+    if (!isFinite(minX) && plan.underlay) {
+      const u = plan.underlay; add(u.x, u.y); add(u.x + u.wM, u.y + u.hM);
+    }
     if (!isFinite(minX)) return null;
     return { minX, minY, maxX, maxY };
   };
@@ -505,8 +591,8 @@
   PR.create = function (name) {
     const vid = CM.uid('v');
     const now = Date.now();
-    return {
-      v: 1,
+    return PR.normalize({
+      v: 2,
       id: CM.uid('p'),
       name: name || 'Nuovo progetto',
       created: now,
@@ -515,10 +601,29 @@
       settings: { wallT: 0.12, wallH: 2.7, newState: 'esistente', showDims: true, showGrid: true },
       variants: [{ id: vid, name: 'Principale', plan: P.create() }],
       active: vid
+    });
+  };
+  // Aggiunge i campi introdotti nelle versioni successive
+  PR.normalize = function (p) {
+    p.settings = Object.assign({ wallT: 0.12, wallH: 2.7, newState: 'esistente', showDims: true, showGrid: true, layers: { arredo: true, impianti: true, planimetria: true } }, p.settings || {});
+    p.variants.forEach(v => P.normalize(v.plan));
+    const def = {
+      address: '', lat: 41.9, budget: { total: 0, rooms: {} }, quotes: [], purchases: {}, payments: [],
+      tasks: [], contacts: [], diary: [], reminders: [], history: [], chat: [], shares: []
     };
+    for (const k in def) if (p[k] === undefined) p[k] = def[k];
+    p.v = 2;
+    return p;
   };
   PR.variant = (p) => p.variants.find(v => v.id === p.active) || p.variants[0];
   PR.plan = (p) => PR.variant(p).plan;
+  PR.addVariant = function (p, name, fromId) {
+    const src = p.variants.find(v => v.id === (fromId || p.active)) || p.variants[0];
+    const v = { id: CM.uid('v'), name: name || 'Variante ' + (p.variants.length + 1), plan: CM.clone(src.plan) };
+    p.variants.push(v);
+    p.active = v.id;
+    return v;
+  };
   PR.summary = function (p) {
     const t = P.totals(PR.plan(p));
     return { id: p.id, name: p.name, updated: p.updated, area: t.net, gross: t.gross, rooms: t.rooms, variants: p.variants.length, sample: !!p.sample };

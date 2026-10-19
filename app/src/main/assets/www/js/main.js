@@ -1,4 +1,4 @@
-/* Casa Mia — avvio dell'app, home dei progetti, schermata pianta */
+/* Casa Mia — avvio, home dei progetti, schede del progetto e collegamenti tra moduli */
 (function () {
   'use strict';
   const CM = window.CM, U = CM.ui, P = CM.plan, S = CM.store, el = U.el;
@@ -6,7 +6,11 @@
 
   let project = null;
   let editor = null;
+  let view3d = null;
   let saveTimer = 0;
+  let tab = 'pianta';
+  let sheetMode = null; // 'underlay' quando è aperto il pannello della planimetria
+  let lastRevealed = '';
 
   /* ================= HOME ================= */
   function relDate(ts) {
@@ -28,32 +32,31 @@
     const list = $('projectList');
     list.innerHTML = '';
     const items = S.listProjects();
-    if (!items.length) {
-      list.appendChild(el('div', { class: 'empty', html: 'Nessun progetto per ora.<br>Tocca <b>Nuovo</b> per iniziare oppure apri l’<b>Esempio</b>.' }));
-    }
+    if (!items.length) list.appendChild(el('div', { class: 'empty', html: 'Nessun progetto per ora.<br>Tocca <b>Nuovo</b> per iniziare oppure apri l’<b>Esempio</b>.' }));
     for (const s of items) {
       const cv = el('canvas', { 'aria-hidden': 'true' });
       const p = S.loadProject(s.id);
       if (p) drawThumb(cv, p);
-      const meta = CM.fmt.num(s.area || 0, 1) + ' m² · ' + (s.rooms || 0) + (s.rooms === 1 ? ' ambiente' : ' ambienti');
+      const meta = CM.fmt.num(s.area || 0, 1) + ' m² · ' + (s.rooms || 0) + (s.rooms === 1 ? ' ambiente' : ' ambienti') + (s.variants > 1 ? ' · ' + s.variants + ' varianti' : '');
       const title = el('div', { class: 'pc-title' }, [s.name, s.sample ? el('span', { class: 'pc-tag', text: 'Esempio' }) : null]);
       const card = el('button', { class: 'project-card', onclick: () => openProject(s.id), 'aria-label': 'Apri ' + s.name }, [
-        cv,
-        el('div', { class: 'pc-body' }, [title, el('div', { class: 'pc-meta', text: meta }), el('div', { class: 'pc-date', text: relDate(s.updated) })])
+        cv, el('div', { class: 'pc-body' }, [title, el('div', { class: 'pc-meta', text: meta }), el('div', { class: 'pc-date', text: relDate(s.updated) })])
       ]);
       const more = el('button', { class: 'icon-btn ghost pc-menu', 'aria-label': 'Opzioni per ' + s.name, html: U.icon('dots'), onclick: (e) => { e.stopPropagation(); projectMenu(s); } });
       list.appendChild(el('div', { class: 'pc-wrap' }, [card, more]));
     }
-    const ver = S.isNative && window.CasaMiaAndroid.version ? window.CasaMiaAndroid.version() : 'web';
+    const ver = currentVersion();
     let v = document.querySelector('.version');
     if (!v) { v = el('div', { class: 'version' }); document.querySelector('.home-body').appendChild(v); }
-    v.textContent = 'Casa Mia ' + ver + ' · tappa 1: pianta 2D';
+    const last = S.pref('ultimoBackup');
+    v.textContent = 'Casa Mia ' + ver + (last ? ' · ultimo backup ' + new Date(last).toLocaleDateString('it-IT') : '');
   }
 
   async function projectMenu(s) {
     const choice = await U.menu(s.name, [
       { id: 'rename', label: 'Rinomina', icon: 'rename' },
       { id: 'dup', label: 'Duplica', icon: 'copy' },
+      { id: 'export', label: 'Esporta il file del progetto', icon: 'opening' },
       { id: 'delete', label: 'Elimina', icon: 'trash', danger: true }
     ]);
     const p = S.loadProject(s.id);
@@ -65,20 +68,23 @@
       const copy = CM.clone(p);
       copy.id = CM.uid('p'); copy.name = p.name + ' (copia)'; copy.sample = false; copy.created = copy.updated = Date.now();
       S.saveProject(copy); renderHome(); U.toast('Progetto duplicato');
+    } else if (choice === 'export') {
+      CM.share.exportProject(p);
     } else if (choice === 'delete') {
       const ok = await U.confirmDialog('Eliminare il progetto?', '“' + p.name + '” verrà cancellato dal telefono. L’operazione non si può annullare.', 'Elimina', true);
       if (ok) { S.deleteProject(p.id); renderHome(); U.toast('Progetto eliminato'); }
     }
   }
 
-  async function newProject() {
+  async function newProject(withPlan) {
     const n = S.listProjects().length + 1;
-    const name = await U.promptDialog('Nuovo progetto', n === 1 ? 'Casa mia' : 'Progetto ' + n, { label: 'Nome del progetto', ok: 'Crea' });
+    const name = await U.promptDialog(withPlan ? 'Nuovo progetto da planimetria' : 'Nuovo progetto', n === 1 ? 'Casa mia' : 'Progetto ' + n, { label: 'Nome del progetto', ok: withPlan ? 'Avanti' : 'Crea' });
     if (!name || !name.trim()) return;
     const p = CM.project.create(name.trim());
     S.saveProject(p);
     openProject(p.id);
-    U.toast('Scegli “Stanza” e trascina per disegnare');
+    if (withPlan) loadUnderlay();
+    else U.toast('Scegli “Stanza” e trascina per disegnare');
   }
 
   function openSample() {
@@ -94,23 +100,28 @@
     $('editor').classList.toggle('hidden', screen !== 'editor');
   }
 
-  /* ================= EDITOR ================= */
+  /* ================= PROGETTO ================= */
   const TOOLS = [
-    { id: 'select', label: 'Seleziona' },
-    { id: 'room', label: 'Stanza' },
-    { id: 'wall', label: 'Muro' },
-    { id: 'opening', label: 'Porte e finestre' },
-    { id: 'column', label: 'Pilastro' },
-    { id: 'beam', label: 'Trave' }
+    { id: 'select', label: 'Seleziona', icon: 'select' },
+    { id: 'room', label: 'Stanza', icon: 'room' },
+    { id: 'wall', label: 'Muro', icon: 'wall' },
+    { id: 'opening', label: 'Porte e finestre', icon: 'opening' },
+    { id: 'furniture', label: 'Arredo', icon: 'sofa' },
+    { id: 'fixture', label: 'Impianti', icon: 'plug' },
+    { id: 'column', label: 'Pilastro', icon: 'column' },
+    { id: 'beam', label: 'Trave', icon: 'beam' },
+    { id: 'underlay', label: 'Planimetria', icon: 'image' }
   ];
 
   function buildTools() {
     const bar = $('tools');
     bar.innerHTML = '';
+    const activeTool = sheetMode === 'underlay' ? 'underlay' : editor.tool;
     for (const t of TOOLS) {
+      const on = activeTool === t.id || (t.id === 'underlay' && ['calibrate', 'moveUnderlay'].includes(editor.tool));
       bar.appendChild(el('button', {
-        class: 'chip' + (editor.tool === t.id ? ' active' : ''), 'data-tool': t.id, 'aria-pressed': editor.tool === t.id ? 'true' : 'false',
-        html: U.icon(t.id, 18) + '<span>' + t.label + '</span>', onclick: () => setTool(t.id)
+        class: 'chip' + (on ? ' active' : ''), 'data-tool': t.id, 'aria-pressed': on ? 'true' : 'false',
+        html: U.icon(t.icon, 18) + '<span>' + t.label + '</span>', onclick: () => toolClick(t.id)
       }));
     }
     const st = project.settings.newState;
@@ -125,29 +136,56 @@
     }));
     const sub = $('subtools');
     sub.innerHTML = '';
-    sub.classList.toggle('hidden', editor.tool !== 'opening');
+    const showSub = editor.tool === 'opening' || editor.tool === 'fixture';
+    sub.classList.toggle('hidden', !showSub);
     if (editor.tool === 'opening') {
-      for (const k in CM.OPENINGS) {
+      for (const k in CM.OPENINGS) sub.appendChild(el('button', {
+        class: 'chip small' + (editor.openingKind === k ? ' active' : ''), 'aria-pressed': editor.openingKind === k ? 'true' : 'false',
+        html: U.icon(k, 18) + '<span>' + CM.OPENINGS[k].label + '</span>', onclick: () => { editor.setTool('opening', k); buildTools(); }
+      }));
+    }
+    if (editor.tool === 'fixture') {
+      for (const k in CM.FIXTURES) {
+        const g = CM.FIXTURE_GROUPS[CM.FIXTURES[k].group];
         sub.appendChild(el('button', {
-          class: 'chip small' + (editor.openingKind === k ? ' active' : ''), 'aria-pressed': editor.openingKind === k ? 'true' : 'false',
-          html: U.icon(k, 18) + '<span>' + CM.OPENINGS[k].label + '</span>', onclick: () => { editor.setTool('opening', k); buildTools(); }
+          class: 'chip small' + (editor.fixtureKind === k ? ' active' : ''), 'aria-pressed': editor.fixtureKind === k ? 'true' : 'false',
+          html: '<span class="dot" style="background:' + g.color + ';border-radius:99px"></span><span>' + CM.FIXTURES[k].label + '</span>',
+          onclick: () => { editor.fixtureKind = k; editor.setTool('fixture'); buildTools(); }
         }));
       }
     }
     requestAnimationFrame(() => editor.resize());
   }
 
-  function setTool(id) {
+  async function toolClick(id) {
+    if (id === 'underlay') {
+      if (!editor.plan.underlay) { loadUnderlay(); return; }
+      editor.setTool('select');
+      editor.select({});
+      sheetMode = 'underlay';
+      buildTools(); renderSheet();
+      return;
+    }
+    sheetMode = null;
+    if (id === 'furniture') {
+      const it = await CM.tabs.pickItem();
+      if (!it) { buildTools(); return; }
+      editor.setPendingItem(it);
+      buildTools();
+      return;
+    }
     editor.setTool(id);
     buildTools();
+    renderSheet();
   }
 
   function openProject(id) {
     const p = S.loadProject(id);
     if (!p) { U.toast('Progetto non trovato'); renderHome(); return; }
     project = p;
-    project.settings = Object.assign({ wallT: 0.12, wallH: 2.7, newState: 'esistente', showDims: true, showGrid: true }, project.settings || {});
+    sheetMode = null;
     show('editor');
+    setTab('pianta', true);
     editor.setProject(project);
     editor.setTool('select');
     buildTools();
@@ -155,11 +193,22 @@
     updateCompass();
     updateSummary();
     renderSheet();
+    CM.share.history.auto(project);
+  }
+
+  function reloadProject() {
+    if (!project) return;
+    editor.setProject(project);
+    buildTools(); updateHeader(); updateSummary(); renderSheet();
+    if (tab !== 'pianta') renderTab();
+    scheduleSave();
   }
 
   function goHome() {
+    if (project) CM.share.history.auto(project);
     saveNow();
     project = null;
+    if (view3d) view3d.setVisible(false);
     show('home');
     renderHome();
   }
@@ -168,7 +217,14 @@
     if (!project) return;
     $('projectName').textContent = project.name;
     const t = P.totals(editor.plan);
-    $('projectSub').textContent = CM.project.variant(project).name + ' · ' + CM.fmt.area(t.net);
+    $('projectSub').textContent = CM.project.variant(project).name + (project.variants.length > 1 ? ' ▾' : '') + ' · ' + CM.fmt.area(t.net);
+  }
+
+  function allWarnings() {
+    const plan = editor.plan;
+    const list = CM.norms.check(plan).map(n => ({ text: n.text, sel: { type: 'room', id: n.room } }));
+    for (const fid in editor.warnings) for (const w of editor.warnings[fid]) list.push({ text: plan.furniture[fid].name + ': ' + w, sel: { type: 'furniture', id: fid } });
+    return list;
   }
 
   function updateSummary() {
@@ -180,15 +236,32 @@
       if (w.state === 'demolire') dem += P.wallLen(plan, w);
       if (w.state === 'nuovo') nuovo += P.wallLen(plan, w);
     }
-    const parts = [
-      'Netta <b>' + CM.fmt.area(t.net) + '</b>',
-      'Lorda <b>' + CM.fmt.area(t.gross) + '</b>',
-      '<b>' + t.rooms + '</b> ' + (t.rooms === 1 ? 'ambiente' : 'ambienti')
-    ];
+    const box = $('summary');
+    box.innerHTML = '';
+    const warns = allWarnings();
+    if (warns.length) box.appendChild(el('button', { class: 'warn-chip', text: '⚠︎ ' + warns.length + (warns.length === 1 ? ' avviso' : ' avvisi'), onclick: warningsDialog }));
+    const parts = ['Netta <b>' + CM.fmt.area(t.net) + '</b>', 'Lorda <b>' + CM.fmt.area(t.gross) + '</b>', '<b>' + t.rooms + '</b> ' + (t.rooms === 1 ? 'ambiente' : 'ambienti')];
     if (t.outdoor > 0) parts.push('Esterni <b>' + CM.fmt.area(t.outdoor) + '</b>');
     if (dem > 0) parts.push('<span class="dot demolire"></span> <b>' + CM.fmt.m(dem) + '</b>');
     if (nuovo > 0) parts.push('<span class="dot nuovo"></span> <b>' + CM.fmt.m(nuovo) + '</b>');
-    $('summary').innerHTML = parts.join(' · ');
+    try { const c = CM.costs.compute(project); if (c.total > 0) parts.push('Stima <b>' + CM.fmt.eur(c.total) + '</b>'); } catch (e) { console.error(e); }
+    box.appendChild(el('span', { html: parts.join(' · ') }));
+  }
+
+  function warningsDialog() {
+    const list = allWarnings();
+    const body = el('div', {}, [
+      el('div', { class: 'card' }, list.map(w => el('button', { class: 'line btnline', onclick: () => { U.closeOverlay(); focusSel(w.sel); } }, [el('span', { class: 'l-main', text: w.text })]))),
+      el('p', { class: 'muted small', text: CM.norms.NOTE })
+    ]);
+    U.dialog({ title: 'Avvisi', body, actions: [{ label: 'Chiudi', value: true, primary: true }] });
+  }
+
+  function focusSel(sel) {
+    setTab('pianta');
+    editor.setTool('select');
+    buildTools();
+    editor.select(sel);
   }
 
   function updateCompass() {
@@ -198,35 +271,41 @@
   function updateScale(view) {
     const nice = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
     let L = nice[0];
-    for (const n of nice) { if (n * view.s >= 48) { L = n; break; } L = n; }
-    const bar = document.querySelector('#scalebar .bar');
-    bar.style.width = Math.round(L * view.s) + 'px';
+    for (const n of nice) { L = n; if (n * view.s >= 48) break; }
+    document.querySelector('#scalebar .bar').style.width = Math.round(L * view.s) + 'px';
     document.querySelector('#scalebar .lbl').textContent = L < 1 ? Math.round(L * 100) + ' cm' : CM.fmt.num(L, 0) + ' m';
   }
 
   /* ---------- Pannello proprietà ---------- */
-  function sheetHead(kind, name) {
-    return el('div', { class: 'sheet-head' }, [
-      el('div', { class: 'grow' }, [el('span', { class: 'kind', text: kind }), el('span', { class: 'name', text: name })]),
-      el('button', { class: 'icon-btn ghost', 'aria-label': 'Chiudi pannello', html: U.icon('close'), onclick: () => editor.select({}) })
-    ]);
+  function sheetHead(kind, name) { return CM.sheets.head(kind, name, sheetCtx()); }
+
+  function sheetCtx() {
+    return {
+      editor, project, mut: (fn, reason) => editor.mutate(fn, reason), refresh: renderSheet, save: scheduleSave,
+      loadUnderlay, detectWalls,
+      closeUnderlay: (keep) => { sheetMode = null; if (!keep) editor.setTool('select'); buildTools(); renderSheet(); }
+    };
   }
 
   function renderSheet() {
     const sheet = $('sheet');
-    if (sheet.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
+    if (sheet.contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName) && document.activeElement.type !== 'range') return;
     const sel = editor.sel;
     const plan = editor.plan;
+    const scroll = sheet.scrollTop;
     sheet.innerHTML = '';
-    const has = sel.type && (sel.type === 'node' ? false : true);
+    const has = sheetMode === 'underlay' || (sel.type && sel.type !== 'node');
     sheet.classList.toggle('hidden', !has);
     $('stage').classList.toggle('with-sheet', !!has);
     $('hint').classList.toggle('hidden', !!has);
     if (!has) { lastRevealed = ''; return; }
-    const mut = (fn, reason) => editor.mutate(fn, reason);
+    const ctx = sheetCtx();
+    const mut = ctx.mut;
     sheet.appendChild(el('div', { class: 'sheet-grab', 'aria-hidden': 'true' }));
 
-    if (sel.type === 'room' && plan.rooms[sel.id]) {
+    if (sheetMode === 'underlay') {
+      CM.sheets.underlay(sheet, ctx);
+    } else if (sel.type === 'room' && plan.rooms[sel.id]) {
       const room = plan.rooms[sel.id];
       const st = P.roomStats(plan, room);
       const rect = P.rectInfo(plan, room);
@@ -246,23 +325,20 @@
       fields.appendChild(U.numField('Altezza soffitto', room.h || 2.7, 'cm', v => mut(pl => { pl.rooms[sel.id].h = v; }), { min: 1.5, max: 8 }));
       sheet.appendChild(fields);
       sheet.appendChild(el('div', { class: 'stats' }, [
-        U.stat('Superficie netta', CM.fmt.area(st.net)),
-        U.stat('Lorda (asse muri)', CM.fmt.area(st.gross)),
-        U.stat('Perimetro', CM.fmt.m(st.perimeter)),
-        U.stat('Volume', CM.fmt.num(st.net * (room.h || 2.7), 1) + ' m³')
+        U.stat('Superficie netta', CM.fmt.area(st.net)), U.stat('Lorda (asse muri)', CM.fmt.area(st.gross)),
+        U.stat('Perimetro', CM.fmt.m(st.perimeter)), U.stat('Volume', CM.fmt.num(st.net * (room.h || 2.7), 1) + ' m³')
       ]));
-      // stato dei muri della stanza
-      const roomWalls = Object.keys(plan.walls).filter(id => {
-        const w = plan.walls[id];
-        const A = plan.nodes[w.a], B = plan.nodes[w.b];
-        return [A, B, { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 }].every(p => P.pointOnRoomBoundary(plan, room, p));
-      });
+      const nw = CM.norms.check(plan).filter(n => n.room === sel.id);
+      if (nw.length) sheet.appendChild(el('div', { class: 'warn-box', html: nw.map(n => n.text).join('<br>') + '<br><small>' + CM.norms.NOTE + '</small>' }));
+      const roomWalls = P.roomWalls(plan, room);
       const states = new Set(roomWalls.map(id => plan.walls[id].state));
-      const common = states.size === 1 ? [...states][0] : null;
       const f2 = el('div', { class: 'fields' });
-      f2.appendChild(U.segField('Tutti i muri della stanza', Object.keys(CM.WALL_STATES).map(k => ({ value: k, label: CM.WALL_STATES[k].label, dot: k })), common, v => mut(pl => { roomWalls.forEach(id => { if (pl.walls[id]) pl.walls[id].state = v; }); }, 'state')));
+      f2.appendChild(U.segField('Tutti i muri della stanza', Object.keys(CM.WALL_STATES).map(k => ({ value: k, label: CM.WALL_STATES[k].label, dot: k })), states.size === 1 ? [...states][0] : null, v => mut(pl => { roomWalls.forEach(id => { if (pl.walls[id]) pl.walls[id].state = v; }); }, 'state')));
       sheet.appendChild(f2);
+      CM.sheets.roomFinish(sheet, ctx, sel.id);
       sheet.appendChild(el('div', { class: 'actions' }, [
+        el('button', { class: 'btn', text: 'Consigli d’arredo (AI)', onclick: () => CM.share.layoutAdvice(project, sel.id) }),
+        el('button', { class: 'btn', text: 'Foto / diario', onclick: () => CM.tabs.addDiary({ room: sel.id }) }),
         el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina stanza', onclick: () => { editor.deleteSelection(); U.toast('Stanza eliminata · puoi annullare'); } })
       ]));
     } else if (sel.type === 'wall' && plan.walls[sel.id]) {
@@ -276,17 +352,14 @@
       fields.appendChild(U.segField('Stato', Object.keys(CM.WALL_STATES).map(k => ({ value: k, label: CM.WALL_STATES[k].label, dot: k })), w.state, v => mut(pl => { pl.walls[sel.id].state = v; }, 'state')));
       sheet.appendChild(fields);
       const ops = Object.keys(plan.openings).filter(o => plan.openings[o].wall === sel.id).length;
-      sheet.appendChild(el('div', { class: 'stats' }, [
-        U.stat('Superficie parete', CM.fmt.area(L * (w.h || 2.7))),
-        U.stat('Aperture', String(ops))
-      ]));
+      sheet.appendChild(el('div', { class: 'stats' }, [U.stat('Superficie parete', CM.fmt.area(L * (w.h || 2.7))), U.stat('Aperture', String(ops))]));
       sheet.appendChild(el('div', { class: 'actions' }, [
+        el('button', { class: 'btn', text: 'Foto delle tracce', onclick: () => CM.tabs.addDiary({ type: 'tracce', wall: sel.id, room: P.roomOf(plan, { x: (plan.nodes[w.a].x + plan.nodes[w.b].x) / 2, y: (plan.nodes[w.a].y + plan.nodes[w.b].y) / 2 }) || '' }) }),
         el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina muro', onclick: () => editor.deleteSelection() })
       ]));
     } else if (sel.type === 'opening' && plan.openings[sel.id]) {
       const op = plan.openings[sel.id];
-      const def = CM.OPENINGS[op.kind];
-      sheet.appendChild(sheetHead('Apertura', def.label));
+      sheet.appendChild(sheetHead('Apertura', CM.OPENINGS[op.kind].label));
       const fields = el('div', { class: 'fields' });
       fields.appendChild(U.selectField('Tipo', Object.keys(CM.OPENINGS).map(k => ({ value: k, label: CM.OPENINGS[k].label })), op.kind, v => mut(pl => {
         const o = pl.openings[sel.id], d = CM.OPENINGS[v];
@@ -296,6 +369,7 @@
       fields.appendChild(U.numField('Altezza', op.h, 'cm', v => mut(pl => { pl.openings[sel.id].h = v; }), { min: 0.2, max: 6 }));
       if (op.kind === 'finestra') fields.appendChild(U.numField('Davanzale da terra', op.sill || 0, 'cm', v => mut(pl => { pl.openings[sel.id].sill = v; }), { min: 0, max: 3 }));
       fields.appendChild(U.numField('Distanza dall’angolo', Math.max(0, op.pos - op.w / 2), 'cm', v => mut(pl => { const o = pl.openings[sel.id]; o.pos = v + o.w / 2; }), { min: 0, max: 100 }));
+      CM.sheets.openingState(fields, ctx, sel.id);
       sheet.appendChild(fields);
       const acts = [el('button', { class: 'btn', html: U.icon('flip', 18) + 'Inverti lato', onclick: () => mut(pl => { pl.openings[sel.id].flipSide = !pl.openings[sel.id].flipSide; }) })];
       if (op.kind === 'battente') acts.push(el('button', { class: 'btn', html: U.icon('hinge', 18) + 'Cerniera', onclick: () => mut(pl => { pl.openings[sel.id].flipHinge = !pl.openings[sel.id].flipHinge; }) }));
@@ -317,56 +391,289 @@
       sheet.appendChild(fields);
       sheet.appendChild(el('div', { class: 'stats' }, [U.stat('Lunghezza', CM.fmt.m(Math.hypot(b.x2 - b.x1, b.y2 - b.y1)))]));
       sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina trave', onclick: () => editor.deleteSelection() })]));
+    } else if (sel.type === 'furniture' && plan.furniture[sel.id]) {
+      CM.sheets.furniture(sheet, ctx, sel.id);
+    } else if (sel.type === 'fixture' && plan.fixtures[sel.id]) {
+      CM.sheets.fixture(sheet, ctx, sel.id);
     } else {
       sheet.classList.add('hidden');
       $('stage').classList.remove('with-sheet');
       $('hint').classList.remove('hidden');
+      return;
     }
-    const key = sel.type + ':' + sel.id;
+    const key = sheetMode === 'underlay' ? 'underlay' : sel.type + ':' + sel.id;
     requestAnimationFrame(() => {
       editor.resize();
-      if (key === lastRevealed) return;
+      if (key === lastRevealed) { sheet.scrollTop = scroll; return; }
       lastRevealed = key;
+      if (sheetMode === 'underlay') return;
       const st = $('stage').getBoundingClientRect(), sh = sheet.getBoundingClientRect();
       const side = sh.left > st.left + 10;
-      // lascia libera la colonna di bussola e zoom a destra
       editor.reveal(sel, side ? { x: 0, y: 0, w: sh.left - st.left - 72, h: st.height } : { x: 0, y: 0, w: st.width - 72, h: sh.top - st.top });
     });
   }
-  let lastRevealed = '';
 
-  /* ---------- Menu, bussola, impostazioni ---------- */
+  /* ---------- Planimetria ---------- */
+  function pickFile(accept, capture) {
+    return new Promise(resolve => {
+      const input = el('input', { type: 'file', accept });
+      if (capture) input.setAttribute('capture', capture);
+      input.addEventListener('change', () => resolve(input.files[0] || null));
+      input.click();
+    });
+  }
+
+  async function loadUnderlay() {
+    const how = await U.menu('Carica la planimetria', [
+      { id: 'foto', label: 'Scatta una foto', icon: 'camera' },
+      { id: 'file', label: 'Scegli immagine o PDF', icon: 'image' }
+    ]);
+    if (!how) return;
+    const file = await pickFile(how === 'foto' ? 'image/*' : 'image/*,application/pdf', how === 'foto' ? 'environment' : null);
+    if (!file) return;
+    U.toast('Preparo la planimetria…');
+    try {
+      const img = await CM.underlay.fromFile(file);
+      editor.mutate(pl => { pl.underlay = CM.underlay.create(img, pl); }, 'underlay');
+      editor.fit();
+      sheetMode = 'underlay';
+      buildTools(); renderSheet();
+      const go = await U.dialog({ title: 'Metti in scala la planimetria', text: 'Trascina il dito lungo un muro di cui conosci la misura (meglio uno lungo), poi scrivi quanto misura davvero. Dopo puoi ricalcarla o farmi riconoscere i muri.', actions: [{ label: 'Più tardi', value: false }, { label: 'Calibra ora', value: true, primary: true }] });
+      if (go) { sheetMode = null; editor.setTool('calibrate'); buildTools(); renderSheet(); }
+    } catch (e) {
+      U.toast(String(e.message) === 'PDF' ? 'I PDF si aprono nell’app sul telefono' : 'Non riesco ad aprire questo file');
+    }
+  }
+
+  async function onCalibrate(a, b, len) {
+    const v = await U.promptDialog('Quanto misura questo muro?', '', { label: 'Misura reale', unit: 'm', inputmode: 'decimal', mono: true, text: 'Sulla planimetria hai tracciato ' + CM.fmt.m(len) + ' (scala provvisoria).' });
+    if (v == null) { editor.setTool('select'); buildTools(); return; }
+    const real = CM.fmt.parseM(v, 'm');
+    if (!(real > 0.1)) { U.toast('Misura non valida'); return; }
+    editor.applyCalibration(a, len, real);
+    buildTools();
+    U.toast('Planimetria in scala');
+    sheetMode = 'underlay'; renderSheet();
+  }
+
+  async function detectWalls(ai) {
+    const u = editor.plan.underlay;
+    if (!u) return;
+    if (!u.calibrated && !ai) {
+      const go = await U.confirmDialog('La planimetria non è in scala', 'Conviene calibrarla prima, altrimenti le misure dei muri saranno sbagliate. Procedo lo stesso?', 'Procedi');
+      if (!go) return;
+    }
+    if (ai) {
+      if (!CM.ai.enabled()) { await CM.share.aiSettings(); if (!CM.ai.enabled()) return; }
+      U.toast('Gemini sta leggendo la planimetria…');
+      try {
+        const res = await CM.underlay.detectAI(u);
+        let out;
+        editor.mutate(pl => { out = CM.underlay.applyAI(pl, pl.underlay, res); }, 'detect-ai');
+        U.dialog({ title: 'Planimetria riconosciuta', text: 'Ho aggiunto ' + out.walls + ' muri, ' + out.rooms + ' stanze e ' + out.openings + ' porte e finestre' + (out.scaled ? ', e stimato la scala dalle quote' : '') + '. Controlla e correggi sopra la planimetria: puoi annullare.' });
+      } catch (e) { U.toast(CM.ai.errorText(e)); }
+      return;
+    }
+    U.toast('Cerco i muri…');
+    try {
+      const segs = await CM.underlay.detectWalls(u);
+      if (!segs.length) { U.toast('Non trovo muri dritti: prova con un’immagine più nitida o con Gemini'); return; }
+      const ok = await U.confirmDialog('Trovati ' + segs.length + ' tratti di muro', 'Li aggiungo come muri esistenti sopra la planimetria? Poi potrai correggerli, aggiungere porte e chiudere le stanze. Puoi annullare.', 'Aggiungi');
+      if (!ok) return;
+      let n = 0;
+      editor.mutate(pl => { n = CM.underlay.applyWalls(pl, segs, 'esistente'); }, 'detect');
+      U.toast(n + ' muri aggiunti: ora disegna le stanze sopra');
+    } catch (e) { console.error(e); U.toast('Riconoscimento non riuscito'); }
+  }
+
+  /* ---------- Schede ---------- */
+  function setTab(id, silent) {
+    tab = id;
+    document.querySelectorAll('.tab').forEach(t => {
+      const on = t.dataset.tab === id;
+      t.classList.toggle('active', on);
+      if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
+    });
+    $('editor').classList.toggle('tab-other', id !== 'pianta');
+    $('tabview').classList.toggle('hidden', id === 'pianta' || id === '3d');
+    $('view3dWrap').classList.toggle('hidden', id !== '3d');
+    if (view3d) view3d.setVisible(id === '3d');
+    if (id === 'pianta') { requestAnimationFrame(() => { editor.resize(); editor.draw(); }); }
+    if (!silent) renderTab();
+  }
+
+  function renderTab() {
+    if (!project) return;
+    const box = $('tabview');
+    const keep = box.scrollTop;
+    try {
+      if (tab === 'arredo') CM.tabs.renderArredo(box);
+      else if (tab === 'costi') CM.tabs.renderCosti(box);
+      else if (tab === 'lavori') CM.tabs.renderLavori(box);
+      else if (tab === '3d') open3d();
+    } catch (e) { console.error(e); U.toast('Errore nella scheda: ' + e.message); }
+    box.scrollTop = keep;
+  }
+
+  /* ---------- 3D ---------- */
+  function build3dUi() {
+    const wrap = $('view3dWrap');
+    const seg = (items, val, on) => el('div', { class: 'seg compact' }, items.map(([v, l]) => el('button', { class: v === val ? 'on' : '', text: l, onclick: () => on(v) })));
+    const bar = $('v3dBar');
+    const render = () => {
+      bar.innerHTML = '';
+      bar.append(
+        seg([['orbit', 'Modellino'], ['walk', 'Passeggiata']], view3d.mode, v => { view3d.setMode(v); $('joystick').classList.toggle('hidden', v !== 'walk'); render(); }),
+        seg([['prima', 'Prima'], ['dopo', 'Dopo']], view3d.phase, v => { view3d.phase = v; view3d.build(project); render(); }),
+        el('button', { class: 'chip small' + (view3d.lowWalls ? ' active' : ''), text: 'Muri bassi', onclick: () => { view3d.lowWalls = !view3d.lowWalls; view3d.build(project); render(); } }),
+        el('button', { class: 'chip small', html: U.icon('sun', 16) + '<span>Sole</span>', onclick: () => $('sunPanel').classList.toggle('hidden') }),
+        el('button', { class: 'chip small', text: 'Foto', onclick: () => CM.share.file('vista-3d.jpg', 'image/jpeg', view3d.snapshot(), true) }),
+        el('button', { class: 'chip small', text: 'Render AI', onclick: () => CM.share.render(project) }),
+        el('button', { class: 'chip small', text: 'Inquadra', onclick: () => { view3d.resetCamera(); } })
+      );
+    };
+    render();
+    // sole
+    const day = el('input', { type: 'range', min: '1', max: '365', value: String(view3d.day), 'aria-label': 'Giorno dell’anno' });
+    const hour = el('input', { type: 'range', min: '5', max: '21', step: '0.25', value: String(view3d.hour), 'aria-label': 'Ora del giorno' });
+    const lbl = el('div', { class: 'mono small' });
+    const upd = () => {
+      view3d.day = +day.value; view3d.hour = +hour.value; view3d.updateSun();
+      const d = new Date(2026, 0, view3d.day);
+      const h = Math.floor(view3d.hour), m = Math.round((view3d.hour - h) * 60);
+      const s = view3d.sunInfo || { elevation: 0, azimuth: 0 };
+      lbl.textContent = d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) + ' · ore ' + h + ':' + String(m).padStart(2, '0') + ' · ' + (s.elevation > 0 ? 'sole a ' + Math.round(s.elevation) + '°' : 'sole sotto l’orizzonte');
+    };
+    day.addEventListener('input', upd); hour.addEventListener('input', upd);
+    $('sunPanel').append(el('div', { class: 'range-row' }, [el('span', { class: 'small', text: 'Giorno' }), day]), el('div', { class: 'range-row' }, [el('span', { class: 'small', text: 'Ora' }), hour]), lbl,
+      el('button', { class: 'btn small', text: 'Posizione della casa', onclick: () => CM.share.locationDialog(project).then(upd) }));
+    setTimeout(upd, 0);
+    // joystick per la passeggiata
+    const joy = $('joystick'), knob = joy.querySelector('i');
+    let jid = null;
+    const jmove = (e) => {
+      const r = joy.getBoundingClientRect();
+      let x = (e.clientX - r.left - r.width / 2) / (r.width / 2), y = (e.clientY - r.top - r.height / 2) / (r.height / 2);
+      const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l; }
+      knob.style.transform = 'translate(' + (x * 34) + 'px,' + (y * 34) + 'px)';
+      view3d.setMove(x, -y);
+    };
+    joy.addEventListener('pointerdown', e => { jid = e.pointerId; joy.setPointerCapture(jid); jmove(e); });
+    joy.addEventListener('pointermove', e => { if (e.pointerId === jid) jmove(e); });
+    const jend = () => { jid = null; knob.style.transform = ''; view3d.setMove(0, 0); };
+    joy.addEventListener('pointerup', jend); joy.addEventListener('pointercancel', jend);
+    void wrap;
+  }
+
+  function open3d() {
+    if (!view3d) {
+      view3d = new CM.View3D($('view3d'));
+      if (!view3d.init()) { U.toast('La vista 3D non è disponibile su questo dispositivo'); view3d = null; return; }
+      build3dUi();
+      new ResizeObserver(() => view3d && view3d.resize()).observe($('view3d'));
+    }
+    view3d.setVisible(true);
+    view3d._placed = view3d.project === project && view3d._placed;
+    view3d.build(project);
+    view3d.resize();
+  }
+
+  /* ---------- Menu del progetto ---------- */
   async function moreMenu() {
     const s = project.settings;
-    const choice = await U.menu('Opzioni', [
+    const L = s.layers || (s.layers = { arredo: true, impianti: true, planimetria: true });
+    const choice = await U.menu('Progetto', [
+      { id: 'variants', label: 'Varianti', icon: 'copy', right: project.variants.length > 1 ? String(project.variants.length) : '' },
+      { id: 'assistant', label: 'Assistente', icon: 'spark' },
+      { id: 'share', label: 'Condividi con altre persone', icon: 'share' },
+      { id: 'pdf', label: 'Esporta PDF', icon: 'opening' },
+      { id: 'img', label: 'Immagine della pianta', icon: 'image' },
+      { id: 'file', label: 'Esporta il file del progetto', icon: 'opening' },
+      { id: 'history', label: 'Storico versioni', icon: 'history' },
+      { id: 'location', label: 'Posizione della casa (sole)', icon: 'sun', right: project.address ? project.address.replace('_', ' ') : '' },
+      { id: 'l-arredo', label: 'Mostra arredo', icon: 'sofa', toggle: L.arredo !== false },
+      { id: 'l-impianti', label: 'Mostra impianti', icon: 'plug', toggle: L.impianti !== false },
+      { id: 'l-plan', label: 'Mostra planimetria', icon: 'image', toggle: L.planimetria !== false },
       { id: 'dims', label: 'Quote dei muri', icon: 'ruler', toggle: !!s.showDims },
       { id: 'grid', label: 'Griglia', icon: 'grid', toggle: s.showGrid !== false },
       { id: 'thick', label: 'Spessore dei nuovi muri', icon: 'thick', right: Math.round(s.wallT * 100) + ' cm' },
       { id: 'height', label: 'Altezza dei soffitti', icon: 'height', right: Math.round(s.wallH * 100) + ' cm' },
-      { id: 'fit', label: 'Adatta alla vista', icon: 'fit' },
       { id: 'rename', label: 'Rinomina progetto', icon: 'rename' },
       { id: 'help', label: 'Guida rapida', icon: 'help' },
       { id: 'delete', label: 'Elimina progetto', icon: 'trash', danger: true }
     ]);
-    if (choice === 'dims') { s.showDims = !s.showDims; scheduleSave(); editor.draw(); }
-    if (choice === 'grid') { s.showGrid = s.showGrid === false; scheduleSave(); editor.draw(); }
-    if (choice === 'fit') editor.fit();
-    if (choice === 'help') U.tutorial();
-    if (choice === 'thick') {
-      const v = await U.promptDialog('Spessore dei nuovi muri', String(Math.round(s.wallT * 100)), { label: 'Spessore', unit: 'cm', inputmode: 'decimal', mono: true, text: 'Vale per i muri che disegnerai da ora. Per un muro esistente toccalo e cambia lo spessore nel pannello.' });
-      const m = CM.fmt.parseM(v, 'cm');
-      if (v != null) { if (m >= 0.03 && m <= 1.2) { s.wallT = m; scheduleSave(); } else U.toast('Valore non valido'); }
+    const redraw = () => { scheduleSave(); editor.draw(); };
+    switch (choice) {
+      case 'variants': return variantsMenu();
+      case 'assistant': return CM.share.assistant(project);
+      case 'share': return CM.share.shareDialog(project);
+      case 'pdf': return CM.share.pdf(project);
+      case 'img': return CM.share.file('pianta-' + project.name.replace(/\W+/g, '-') + '.png', 'image/png', CM.share.planImage(project), true);
+      case 'file': return CM.share.exportProject(project);
+      case 'history': return CM.share.history.dialog(project);
+      case 'location': return CM.share.locationDialog(project);
+      case 'l-arredo': L.arredo = L.arredo === false; return redraw();
+      case 'l-impianti': L.impianti = L.impianti === false; return redraw();
+      case 'l-plan': L.planimetria = L.planimetria === false; return redraw();
+      case 'dims': s.showDims = !s.showDims; return redraw();
+      case 'grid': s.showGrid = s.showGrid === false; return redraw();
+      case 'help': return U.tutorial();
+      case 'rename': return renameProject();
+      case 'thick': {
+        const v = await U.promptDialog('Spessore dei nuovi muri', String(Math.round(s.wallT * 100)), { label: 'Spessore', unit: 'cm', inputmode: 'decimal', mono: true });
+        const m = CM.fmt.parseM(v, 'cm');
+        if (v != null) { if (m >= 0.03 && m <= 1.2) { s.wallT = m; scheduleSave(); } else U.toast('Valore non valido'); }
+        return;
+      }
+      case 'height': {
+        const v = await U.promptDialog('Altezza dei soffitti', String(Math.round(s.wallH * 100)), { label: 'Altezza', unit: 'cm', inputmode: 'decimal', mono: true });
+        const m = CM.fmt.parseM(v, 'cm');
+        if (v != null) { if (m >= 1.5 && m <= 8) { s.wallH = m; scheduleSave(); } else U.toast('Valore non valido'); }
+        return;
+      }
+      case 'delete': {
+        const ok = await U.confirmDialog('Eliminare il progetto?', '“' + project.name + '” verrà cancellato dal telefono. L’operazione non si può annullare.', 'Elimina', true);
+        if (ok) { const id = project.id; clearTimeout(saveTimer); project = null; S.deleteProject(id); show('home'); renderHome(); U.toast('Progetto eliminato'); }
+      }
     }
-    if (choice === 'height') {
-      const v = await U.promptDialog('Altezza dei soffitti', String(Math.round(s.wallH * 100)), { label: 'Altezza', unit: 'cm', inputmode: 'decimal', mono: true, text: 'Vale per le stanze e i muri che disegnerai da ora.' });
-      const m = CM.fmt.parseM(v, 'cm');
-      if (v != null) { if (m >= 1.5 && m <= 8) { s.wallH = m; scheduleSave(); } else U.toast('Valore non valido'); }
+  }
+
+  async function variantsMenu() {
+    const items = project.variants.map(v => ({ id: 'v:' + v.id, label: v.name + (v.id === project.active ? '  ✓' : ''), icon: 'room' }));
+    items.push({ id: 'new', label: 'Nuova variante da quella aperta', icon: 'copy' });
+    items.push({ id: 'rename', label: 'Rinomina la variante aperta', icon: 'rename' });
+    if (project.variants.length > 1) items.push({ id: 'compare', label: 'Confronta i costi', icon: 'euro' });
+    if (project.variants.length > 1) items.push({ id: 'delete', label: 'Elimina la variante aperta', icon: 'trash', danger: true });
+    const c = await U.menu('Varianti', items);
+    if (!c) return;
+    if (c.startsWith('v:')) return setVariant(c.slice(2));
+    if (c === 'new') {
+      const name = await U.promptDialog('Nuova variante', 'Variante ' + (project.variants.length + 1), { label: 'Nome', text: 'Es. “Cucina aperta”: parte come copia di quella aperta, poi la modifichi.' });
+      if (name == null) return;
+      CM.project.addVariant(project, name.trim() || undefined);
+      reloadProject(); U.toast('Stai lavorando su “' + CM.project.variant(project).name + '”');
     }
-    if (choice === 'rename') renameProject();
-    if (choice === 'delete') {
-      const ok = await U.confirmDialog('Eliminare il progetto?', '“' + project.name + '” verrà cancellato dal telefono. L’operazione non si può annullare.', 'Elimina', true);
-      if (ok) { const id = project.id; clearTimeout(saveTimer); project = null; S.deleteProject(id); show('home'); renderHome(); U.toast('Progetto eliminato'); }
+    if (c === 'rename') {
+      const v = CM.project.variant(project);
+      const name = await U.promptDialog('Rinomina variante', v.name, { label: 'Nome' });
+      if (name && name.trim()) { v.name = name.trim(); scheduleSave(); updateHeader(); }
     }
+    if (c === 'compare') setTab('costi');
+    if (c === 'delete') {
+      const v = CM.project.variant(project);
+      const ok = await U.confirmDialog('Eliminare “' + v.name + '”?', 'La variante verrà cancellata.', 'Elimina', true);
+      if (!ok) return;
+      project.variants = project.variants.filter(x => x.id !== v.id);
+      project.active = project.variants[0].id;
+      reloadProject();
+    }
+  }
+
+  function setVariant(id) {
+    if (!project.variants.some(v => v.id === id)) return;
+    project.active = id;
+    reloadProject();
+    U.toast('Variante “' + CM.project.variant(project).name + '”');
   }
 
   async function renameProject() {
@@ -377,31 +684,17 @@
   function compassDialog() {
     let val = project.north || 0;
     const needle = el('div', { html: '<svg width="96" height="96" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="19" fill="#FBFBF9" stroke="#E3E1DB"/><g class="nd"><path d="M20 5l5 15h-10z" fill="#D23B2A"/><path d="M20 35l-5-15h10z" fill="#C9C6BE"/></g></svg>', style: 'display:flex;justify-content:center;margin:10px 0' });
-    const g = () => needle.querySelector('.nd');
     const label = el('span', { class: 'val', text: val + '°' });
     const range = el('input', { type: 'range', min: '0', max: '359', value: String(val), 'aria-label': 'Direzione del nord in gradi' });
-    const sync = () => { label.textContent = val + '°'; g().setAttribute('transform', 'rotate(' + val + ' 20 20)'); };
+    const sync = () => { label.textContent = val + '°'; needle.querySelector('.nd').setAttribute('transform', 'rotate(' + val + ' 20 20)'); };
     range.addEventListener('input', () => { val = +range.value; sync(); });
     setTimeout(sync, 0);
-    const body = el('div', {}, [needle, el('div', { class: 'range-row' }, [range, label])]);
     U.dialog({
-      title: 'Dov’è il nord?',
-      text: 'Ruota la freccia rossa verso il nord rispetto alla pianta. Servirà per simulare la luce del sole nella vista 3D.',
-      body,
+      title: 'Dov’è il nord?', text: 'Ruota la freccia rossa verso il nord rispetto alla pianta: serve per la luce del sole nella vista 3D.',
+      body: el('div', {}, [needle, el('div', { class: 'range-row' }, [range, label])]),
       actions: [{ label: 'Annulla', value: null }, { label: 'Salva', value: () => val, primary: true }]
-    }).then(v => {
-      if (v == null) return;
-      project.north = v; project.updated = Date.now();
-      updateCompass(); scheduleSave();
-    });
+    }).then(v => { if (v == null) return; project.north = v; project.updated = Date.now(); updateCompass(); scheduleSave(); });
   }
-
-  const SOON = {
-    '3d': 'La vista 3D con passeggiata arriva in una prossima tappa',
-    arredo: 'Arredo e cataloghi arrivano in una prossima tappa',
-    costi: 'Costi, budget e varianti arrivano in una prossima tappa',
-    lavori: 'Acquisti e cantiere arrivano in una prossima tappa'
-  };
 
   /* ---------- Salvataggio ---------- */
   function scheduleSave() {
@@ -411,18 +704,14 @@
   function saveNow() {
     clearTimeout(saveTimer);
     if (!project) return;
+    project.updated = Date.now();
     if (!S.saveProject(project)) U.toast('Salvataggio non riuscito: memoria piena?');
   }
 
   /* ---------- Aggiornamento dell'app ---------- */
   const RELEASES_API = 'https://api.github.com/repos/monastradario-cpu/NEWAPP/releases/latest';
-  let updateInfo = null;
-  let checking = false;
-
-  function currentVersion() {
-    return S.isNative && window.CasaMiaAndroid.version ? window.CasaMiaAndroid.version() : '0.0.0';
-  }
-
+  let updateInfo = null, checking = false;
+  function currentVersion() { return S.isNative && window.CasaMiaAndroid.version ? window.CasaMiaAndroid.version() : 'web'; }
   function setUpdateUi(state) {
     const b = $('updateBtn');
     b.classList.toggle('busy', state === 'busy');
@@ -430,7 +719,6 @@
     $('updateBadge').classList.toggle('hidden', !updateInfo);
     b.querySelector('span').textContent = updateInfo ? 'Aggiorna a ' + updateInfo.ver : 'Aggiorna';
   }
-
   async function checkUpdate(manual) {
     if (checking) return;
     checking = true;
@@ -441,55 +729,31 @@
       const rel = await r.json();
       const ver = String(rel.tag_name || '').replace(/^v/, '');
       const apk = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
-      const cur = currentVersion();
-      if (apk && CM.versionNewer(ver, cur)) {
-        updateInfo = { ver, url: apk.browser_download_url, page: rel.html_url, size: apk.size };
-      } else {
-        updateInfo = null;
-      }
+      updateInfo = apk && CM.versionNewer(ver, currentVersion()) ? { ver, url: apk.browser_download_url, page: rel.html_url, size: apk.size } : null;
       setUpdateUi();
-      if (manual) {
-        if (updateInfo) offerUpdate();
-        else U.toast('Hai gi\u00e0 l\u2019ultima versione (' + cur + ')');
-      }
+      if (manual) { if (updateInfo) offerUpdate(); else U.toast('Hai già l’ultima versione (' + currentVersion() + ')'); }
     } catch (e) {
       setUpdateUi();
       if (manual) U.toast('Non riesco a controllare: sei connesso a internet?');
-    } finally {
-      checking = false;
-    }
+    } finally { checking = false; }
   }
-
   async function offerUpdate() {
     const u = updateInfo;
     if (!u) return;
     const mb = u.size ? ' (' + CM.fmt.num(u.size / 1048576, 1) + ' MB)' : '';
-    const ok = await U.dialog({
-      title: '\u00c8 disponibile la versione ' + u.ver,
-      text: 'Stai usando la ' + currentVersion() + '. Scarico l\u2019aggiornamento' + mb + ' e poi Android ti chiede di confermare l\u2019installazione. I tuoi progetti restano salvati.',
-      actions: [{ label: 'Pi\u00f9 tardi', value: false }, { label: 'Aggiorna ora', value: true, primary: true }]
-    });
+    const ok = await U.dialog({ title: 'È disponibile la versione ' + u.ver, text: 'Stai usando la ' + currentVersion() + '. Scarico l’aggiornamento' + mb + ' e poi Android ti chiede di confermare l’installazione. I tuoi progetti restano salvati.', actions: [{ label: 'Più tardi', value: false }, { label: 'Aggiorna ora', value: true, primary: true }] });
     if (!ok) return;
     saveNow();
-    if (S.isNative && window.CasaMiaAndroid.update) {
-      window.CasaMiaAndroid.update(u.url, u.ver);
-      setUpdateUi('busy');
-    } else {
-      window.open(u.page, '_blank');
-    }
+    if (S.isNative && window.CasaMiaAndroid.update) { window.CasaMiaAndroid.update(u.url, u.ver); setUpdateUi('busy'); }
+    else window.open(u.page, '_blank');
   }
-
   CM.onUpdateStatus = function (status) {
-    if (status === 'download') U.toast('Download dell\u2019aggiornamento in corso\u2026');
-    if (status === 'scaricato') { setUpdateUi(); U.toast('Download completato: conferma l\u2019installazione'); }
+    if (status === 'download') U.toast('Download dell’aggiornamento in corso…');
+    if (status === 'scaricato') { setUpdateUi(); U.toast('Download completato: conferma l’installazione'); }
     if (status === 'errore') { setUpdateUi(); U.toast('Aggiornamento non riuscito, riprova tra poco'); }
     if (status === 'permesso') {
       setUpdateUi();
-      U.dialog({
-        title: 'Un ultimo permesso',
-        text: 'Android chiede di consentire a Casa Mia di installare aggiornamenti. Attiva \u201cConsenti da questa fonte\u201d e torna indietro: l\u2019installazione riparte da sola. Serve solo la prima volta.',
-        actions: [{ label: 'Ho capito', value: true, primary: true }]
-      });
+      U.dialog({ title: 'Un ultimo permesso', text: 'Android chiede di consentire a Casa Mia di installare aggiornamenti. Attiva “Consenti da questa fonte” e torna indietro: l’installazione riparte da sola. Serve solo la prima volta.', actions: [{ label: 'Ho capito', value: true, primary: true }] });
     }
   };
 
@@ -497,49 +761,82 @@
   CM.onBack = function () {
     if (U.overlayOpen()) { U.closeOverlay(); return true; }
     if (!$('editor').classList.contains('hidden')) {
+      if (tab !== 'pianta') { setTab('pianta'); return true; }
       if (editor.chain) { editor.finishChain(); return true; }
+      if (sheetMode) { sheetMode = null; buildTools(); renderSheet(); return true; }
       if (editor.sel.type) { editor.select({}); return true; }
-      if (editor.tool !== 'select') { setTool('select'); return true; }
+      if (editor.tool !== 'select') { editor.setTool('select'); buildTools(); return true; }
       goHome();
       return true;
     }
     return false;
   };
   CM.flush = saveNow;
-  // Accesso per i test automatici
+
+  /* ---------- Interfaccia per gli altri moduli ---------- */
+  CM.app = {
+    project: () => project,
+    editor: () => editor,
+    save: () => { scheduleSave(); if (tab === 'pianta') { updateSummary(); } },
+    tab: () => tab,
+    setTab,
+    refreshTab: renderTab,
+    reload: reloadProject,
+    setVariant,
+    focus: focusSel,
+    placeItem: (it) => { setTab('pianta'); sheetMode = null; editor.setPendingItem(it); buildTools(); renderSheet(); },
+    snapshot3d: (needOpen) => {
+      if (view3d && view3d.ready && view3d.project === project) return view3d.snapshot();
+      if (needOpen) return null;
+      return null;
+    }
+  };
   CM._debug = { editor: () => editor, project: () => project };
 
   /* ================= AVVIO ================= */
   function init() {
     editor = new CM.Editor($('planCanvas'), {
       onChange: () => { scheduleSave(); updateSummary(); updateHeader(); renderSheet(); },
-      onSelect: () => renderSheet(),
+      onSelect: () => { if (editor.sel.type) sheetMode = null; renderSheet(); },
       onHint: (text, actions) => {
         $('hintText').textContent = text;
         const box = $('hintActions');
         box.innerHTML = '';
         if (actions.includes('undoPoint')) box.appendChild(el('button', { text: 'Annulla punto', onclick: () => editor.undoPoint() }));
         if (actions.includes('finish')) box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => editor.finishChain() }));
+        if (editor.tool === 'fixture') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
+        if (editor.tool === 'calibrate' || editor.tool === 'moveUnderlay') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); } }));
       },
       onHistory: (u, r) => { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
       onToast: (t) => U.toast(t),
-      onDraw: (view) => updateScale(view)
+      onDraw: (view) => updateScale(view),
+      onCalibrate
     });
 
-    $('newProject').addEventListener('click', newProject);
+    $('newProject').addEventListener('click', () => newProject(false));
     $('openSample').addEventListener('click', openSample);
-    $('loadPlan').addEventListener('click', () => U.toast('Caricare una planimetria (foto, immagine o PDF) arriva nella prossima tappa'));
+    $('loadPlan').addEventListener('click', () => newProject(true));
     $('homeMenu').addEventListener('click', async () => {
       const c = await U.menu('Casa Mia', [
+        { id: 'open', label: 'Apri un file di progetto o backup', icon: 'opening' },
+        { id: 'backup', label: 'Backup su Drive', icon: 'share' },
+        { id: 'ai', label: 'Assistente Gemini', icon: 'spark', right: CM.ai.enabled() ? 'attivo' : '' },
+        { id: 'prices', label: 'Prezzi di riferimento', icon: 'euro' },
+        { id: 'shop', label: 'Ricontrolla i prezzi dei negozi', icon: 'history' },
         { id: 'help', label: 'Guida rapida', icon: 'help' },
         { id: 'sample', label: 'Ricrea il progetto d’esempio', icon: 'copy' }
       ]);
+      if (c === 'open') { const r = await CM.share.importFile(); if (r) { renderHome(); if (r.project) openProject(r.project); } }
+      if (c === 'backup') CM.share.backupAll();
+      if (c === 'ai') CM.share.aiSettings();
+      if (c === 'prices') CM.tabs.pricesDialog();
+      if (c === 'shop') CM.shop.refreshPrices();
       if (c === 'help') U.tutorial();
       if (c === 'sample') { const p = CM.sample.create(); S.saveProject(p); renderHome(); U.toast('Esempio aggiunto'); }
     });
     $('updateBtn').addEventListener('click', () => (updateInfo ? offerUpdate() : checkUpdate(true)));
     $('backHome').addEventListener('click', goHome);
-    $('projectTitle').addEventListener('click', renameProject);
+    $('projectTitle').addEventListener('click', () => (project.variants.length > 1 ? variantsMenu() : renameProject()));
     $('undoBtn').addEventListener('click', () => editor.undo());
     $('redoBtn').addEventListener('click', () => editor.redo());
     $('moreBtn').addEventListener('click', moreMenu);
@@ -547,18 +844,13 @@
     $('zoomIn').addEventListener('click', () => editor.zoomBy(1.4));
     $('zoomOut').addEventListener('click', () => editor.zoomBy(1 / 1.4));
     $('zoomFit').addEventListener('click', () => editor.fit());
-    document.querySelectorAll('.tab').forEach(t => {
-      if (t.dataset.tab !== 'pianta') t.classList.add('soon');
-      t.addEventListener('click', () => { if (SOON[t.dataset.tab]) U.toast(SOON[t.dataset.tab]); });
-    });
+    document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setTab(t.dataset.tab)));
 
-    const ro = new ResizeObserver(() => editor.resize());
-    ro.observe($('stage'));
-    window.addEventListener('resize', () => { editor.resize(); renderSheet(); });
+    new ResizeObserver(() => editor.resize()).observe($('stage'));
+    window.addEventListener('resize', () => { editor.resize(); if (project && tab === 'pianta') renderSheet(); });
 
-    // Scorciatoie da tastiera (utili su tablet con tastiera e per i test)
     document.addEventListener('keydown', (e) => {
-      if ($('editor').classList.contains('hidden') || U.overlayOpen()) return;
+      if ($('editor').classList.contains('hidden') || U.overlayOpen() || tab !== 'pianta') return;
       if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? editor.redo() : editor.undo(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); editor.redo(); }
@@ -567,29 +859,20 @@
     });
     document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
 
-    // Autotest del modello sul dispositivo
     const errs = CM.selfTest();
     if (errs.length) console.error('CASAMIA_SELFTEST_FAIL ' + errs.join('; '));
     else console.log('CASAMIA_SELFTEST_OK');
 
     const first = !S.pref('avviato');
-    if (first) {
-      S.saveProject(CM.sample.create());
-      S.pref('avviato', Date.now());
-    }
+    if (first) { S.saveProject(CM.sample.create()); S.pref('avviato', Date.now()); }
     renderHome();
     show('home');
-    if (first) setTimeout(() => U.tutorial(() => S.pref('guidaVista', true)), 300);
+    if (first) setTimeout(() => U.tutorial(), 300);
     console.log('CASAMIA_READY ' + (S.isNative ? 'android' : 'browser'));
-    if (S.isNative) setTimeout(() => checkUpdate(false), 2500);
-    setTimeout(() => {
-      const r = $('home').getBoundingClientRect();
-      console.log('CASAMIA_LAYOUT ' + JSON.stringify({
-        win: [innerWidth, innerHeight], dpr: devicePixelRatio, home: [Math.round(r.width), Math.round(r.height)],
-        cards: document.querySelectorAll('.project-card').length, overlay: !$('overlay').classList.contains('hidden'),
-        ua: navigator.userAgent.replace(/^.*(Chrome\/[\d.]+).*$/, '$1')
-      }));
-    }, 1500);
+    if (S.isNative) {
+      setTimeout(() => checkUpdate(false), 2500);
+      setTimeout(() => CM.shop.syncWatch(), 4000);
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

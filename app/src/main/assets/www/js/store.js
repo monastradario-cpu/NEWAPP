@@ -24,7 +24,7 @@
   const store = CM.store = {
     isNative: !!native,
     listProjects() { return readJSON('indice', []).sort((a, b) => b.updated - a.updated); },
-    loadProject(id) { return readJSON('p_' + id, null); },
+    loadProject(id) { const p = readJSON('p_' + id, null); return p ? CM.project.normalize(p) : null; },
     saveProject(p) {
       const ok = backend.put('p_' + p.id, JSON.stringify(p));
       if (!ok) return false;
@@ -37,6 +37,8 @@
       const idx = readJSON('indice', []).filter(s => s.id !== id);
       backend.put('indice', JSON.stringify(idx));
     },
+    getJSON(key, fallback) { return readJSON(key, fallback); },
+    putJSON(key, value) { return backend.put(key, JSON.stringify(value)); },
     pref(key, value) {
       const prefs = readJSON('preferenze', {});
       if (value === undefined) return prefs[key];

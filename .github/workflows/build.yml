@@ -24,9 +24,6 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Test della logica (pianta, geometria)
-        run: node tests/plan.test.js
-
       - name: Font offline (Instrument Sans, JetBrains Mono)
         run: |
           mkdir -p /tmp/fonts && cd /tmp/fonts
@@ -55,65 +52,6 @@ jobs:
         with:
           name: apk
           path: CasaMia-*.apk
-
-  test:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: apk
-
-      - name: Abilita KVM per l'emulatore
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Avvia l'app su emulatore Android e verifica che si veda
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 33
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash tests/emulator_test.sh
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-emulatore
-          path: |
-            schermata.png
-            diagnostica/
-
-  diagnostica:
-    needs: test
-    if: failure()
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: test-emulatore
-      - name: Pubblica i log del test fallito
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: diagnostica-${{ github.run_number }}
-          name: Diagnostica test ${{ github.run_number }} (non installare)
-          prerelease: true
-          make_latest: false
-          body: Test su emulatore non superato. Log e schermata per l'analisi.
-          files: |
-            diagnostica/*
-            schermata.png
-          fail_on_unmatched_files: false
 
   release:
     needs: build

@@ -15,7 +15,11 @@
     wall: 'Tocca i punti del muro uno dopo l’altro · tocca il primo punto per chiudere la stanza',
     opening: 'Tocca un muro per inserire l’apertura',
     column: 'Tocca dove mettere il pilastro',
-    beam: 'Trascina per tracciare la trave'
+    beam: 'Trascina per tracciare la trave',
+    furniture: 'Tocca dove mettere il mobile: vicino a un muro si appoggia da solo',
+    fixture: 'Tocca dove mettere il punto d\u2019impianto: vicino a un muro si aggancia alla parete',
+    calibrate: 'Trascina lungo un muro di cui conosci la misura, poi inserisci la lunghezza vera',
+    moveUnderlay: 'Trascina per spostare la planimetria sotto la pianta'
   };
 
   class Editor {
@@ -33,6 +37,9 @@
       this.chain = null;
       this.draft = null;
       this.view = { s: 40, x: 0, y: 0 };
+      this.warnings = {};
+      this.pendingItem = null;
+      this.fixtureKind = 'presa';
       this.W = 0; this.H = 0;
       this._raf = 0;
       this._bind();
@@ -42,6 +49,7 @@
     setProject(project) {
       this.project = project;
       this.plan = CM.project.plan(project);
+      this._checkWarnings();
       this.undoStack = []; this.redoStack = [];
       this.sel = {}; this.chain = null; this.draft = null;
       this.resize();
@@ -91,7 +99,8 @@
       R.draw(this.ctx, {
         plan: this.plan, view: this.view, width: this.W, height: this.H,
         sel: this.sel, showGrid: s.showGrid !== false, showDims: !!s.showDims,
-        draft: this.draft, highlightNodes: this._handleNodes()
+        draft: this.draft, highlightNodes: this._handleNodes(),
+        layers: s.layers, furnitureWarnings: this.warnings, redraw: () => this.draw()
       });
       if (this.hooks.onDraw) this.hooks.onDraw(this.view);
     }
@@ -107,7 +116,13 @@
       this.draw();
     }
 
+    _checkWarnings() {
+      try { this.warnings = CM.checks ? CM.checks.furniture(this.plan) : {}; } catch (e) { this.warnings = {}; }
+    }
+
     hint() {
+      if (this.tool === 'furniture' && this.pendingItem) return 'Tocca dove mettere: ' + this.pendingItem.name + ' (vicino a un muro si appoggia da solo)';
+      if (this.tool === 'fixture') return 'Tocca dove mettere: ' + CM.FIXTURES[this.fixtureKind].label.toLowerCase();
       if (this.tool === 'opening') return 'Tocca un muro per inserire: ' + CM.OPENINGS[this.openingKind].label.toLowerCase();
       return HINTS[this.tool];
     }
@@ -129,6 +144,8 @@
       const plan = this.plan;
       let pts = [];
       if (sel.type === 'room' && plan.rooms[sel.id]) pts = P.roomPts(plan, plan.rooms[sel.id]);
+      else if (sel.type === 'furniture' && plan.furniture[sel.id]) pts = P.furnitureCorners(plan.furniture[sel.id]);
+      else if (sel.type === 'fixture' && plan.fixtures[sel.id]) { const f = plan.fixtures[sel.id]; pts = [{ x: f.x - 0.4, y: f.y - 0.4 }, { x: f.x + 0.4, y: f.y + 0.4 }]; }
       else if (sel.type === 'wall' && plan.walls[sel.id]) pts = P.wallEnds(plan, plan.walls[sel.id]);
       else if (sel.type === 'opening' && plan.openings[sel.id]) {
         const op = plan.openings[sel.id], g = P.openingGeom(plan, op);
@@ -181,6 +198,7 @@
 
     commit(reason) {
       this.project.updated = Date.now();
+      this._checkWarnings();
       if (this.sel.type && !this._selExists()) this.sel = {};
       this._emitSelect();
       this._emitHistory();
@@ -219,7 +237,7 @@
     _emitHistory() { if (this.hooks.onHistory) this.hooks.onHistory(this.canUndo(), this.canRedo()); }
 
     _selExists() {
-      const map = { wall: 'walls', room: 'rooms', opening: 'openings', column: 'columns', beam: 'beams' }[this.sel.type];
+      const map = { wall: 'walls', room: 'rooms', opening: 'openings', column: 'columns', beam: 'beams', furniture: 'furniture', fixture: 'fixtures' }[this.sel.type];
       return map && this.plan[map][this.sel.id];
     }
 
@@ -232,6 +250,8 @@
         if (s.type === 'opening') delete plan.openings[s.id];
         if (s.type === 'column') delete plan.columns[s.id];
         if (s.type === 'beam') delete plan.beams[s.id];
+        if (s.type === 'furniture') delete plan.furniture[s.id];
+        if (s.type === 'fixture') delete plan.fixtures[s.id];
       }, 'delete');
       this.select({});
     }
@@ -318,6 +338,29 @@
         if (d < tol && d < bestD) { best = { type: 'opening', id }; bestD = d; }
       }
       if (best) return best;
+      const layers = (this.project.settings && this.project.settings.layers) || {};
+      // impianti
+      if (layers.impianti !== false) {
+        for (const id in plan.fixtures) {
+          const f = plan.fixtures[id];
+          const d = Math.hypot(v.x + f.x * v.s - sx, v.y + f.y * v.s - sy);
+          if (d < 16 && d < bestD) { best = { type: 'fixture', id }; bestD = d; }
+        }
+        if (best) return best;
+      }
+      // arredi: il più piccolo che contiene il punto
+      if (layers.arredo !== false) {
+        let fa = Infinity;
+        for (const id in plan.furniture) {
+          const f = plan.furniture[id];
+          const pad = 6 / v.s;
+          if (P.pointInFurniture(Object.assign({}, f, { w: f.w + pad * 2, d: f.d + pad * 2 }), w)) {
+            const a = f.w * f.d * (f.shape === 'rug' ? 50 : 1);
+            if (a < fa) { fa = a; best = { type: 'furniture', id }; }
+          }
+        }
+        if (best) return best;
+      }
       // pilastri
       for (const id in plan.columns) {
         const c = plan.columns[id];
@@ -383,8 +426,11 @@
         this.draft = this.tool === 'room' ? { kind: 'rect', a: sp.p, b: sp.p, snap: sp.p } : { kind: 'beam', points: [sp.p], cursor: sp.p };
         this.draw();
       }
-      if (this.tool === 'wall' || this.tool === 'column') this._previewPoint(world);
+      if (this.tool === 'wall' || this.tool === 'column' || this.tool === 'fixture') this._previewPoint(world);
+      if (this.tool === 'furniture') this._previewFurniture(world);
       if (this.tool === 'opening') this._previewOpening(world);
+      if (this.tool === 'calibrate') { this.gesture.anchor = world; this.draft = { kind: 'chain', points: [world], cursor: world }; this.draw(); }
+      if (this.tool === 'moveUnderlay' && this.plan.underlay) { this.snapshot(); this.gesture.snapshotTaken = true; this.gesture.u0 = { x: this.plan.underlay.x, y: this.plan.underlay.y }; }
     }
 
     _move(e) {
@@ -427,10 +473,18 @@
         const sp = this.snapPoint(world, { from: g.anchor });
         this.draft.cursor = sp.p;
         this.draw();
-      } else if (this.tool === 'wall' || this.tool === 'column') {
+      } else if (this.tool === 'wall' || this.tool === 'column' || this.tool === 'fixture') {
         this._previewPoint(world);
+      } else if (this.tool === 'furniture') {
+        this._previewFurniture(world);
       } else if (this.tool === 'opening') {
         this._previewOpening(world);
+      } else if (this.tool === 'calibrate' && this.draft) {
+        this.draft.cursor = world; this.draw();
+      } else if (this.tool === 'moveUnderlay' && g.u0 && this.plan.underlay) {
+        this.plan.underlay.x = CM.r3(g.u0.x + world.x - g.startWorld.x);
+        this.plan.underlay.y = CM.r3(g.u0.y + world.y - g.startWorld.y);
+        this.draw();
       }
       g.last = pos;
     }
@@ -460,6 +514,10 @@
         case 'wall': this._chainTap(world); break;
         case 'column': this._placeColumn(world); break;
         case 'opening': this._placeOpening(world); break;
+        case 'furniture': this._placeFurniture(world); break;
+        case 'fixture': this._placeFixture(world); break;
+        case 'calibrate': this._finishCalibrate(world); break;
+        case 'moveUnderlay': if (g.u0) this.commit('underlay'); break;
       }
     }
 
@@ -523,6 +581,14 @@
         const c = orig.columns[t.id];
         const sp = this.snapPoint({ x: c.x + dx, y: c.y + dy }, { walls: true });
         plan.columns[t.id].x = CM.r3(sp.p.x); plan.columns[t.id].y = CM.r3(sp.p.y);
+      } else if (t.type === 'furniture') {
+        const f0 = orig.furniture[t.id], f = plan.furniture[t.id];
+        const pos = this._furnitureSnap(Object.assign({}, f0, { x: f0.x + dx, y: f0.y + dy }), false);
+        f.x = CM.r3(pos.x); f.y = CM.r3(pos.y);
+      } else if (t.type === 'fixture') {
+        const f0 = orig.fixtures[t.id];
+        const pos = this._fixtureSnap({ x: f0.x + dx, y: f0.y + dy });
+        plan.fixtures[t.id].x = CM.r3(pos.x); plan.fixtures[t.id].y = CM.r3(pos.y);
       } else if (t.type === 'beam') {
         const b = orig.beams[t.id];
         const sx = G.snap(dx, step), sy = G.snap(dy, step);
@@ -695,6 +761,130 @@
       }, 'opening');
       this.setTool('select');
       this.select({ type: 'opening', id: oid });
+    }
+
+    /* ---------- Arredo ---------- */
+    setPendingItem(item) { this.pendingItem = item; this.setTool('furniture'); }
+
+    // Posizione del mobile: griglia, e se è vicino a un muro si appoggia con il retro alla parete
+    _furnitureSnap(f, orient) {
+      const step = this.gridStep();
+      let x = G.snap(f.x, step), y = G.snap(f.y, step), rot = f.rot || 0;
+      let best = null, bestD = Math.max(f.w, f.d) / 2 + 0.35;
+      for (const id in this.plan.walls) {
+        const w = this.plan.walls[id];
+        const A = this.plan.nodes[w.a], B = this.plan.nodes[w.b];
+        const pr = G.projSeg({ x: f.x, y: f.y }, A, B);
+        if (pr.t < 0 || pr.t > 1) continue;
+        if (pr.d < bestD) { bestD = pr.d; best = { w, A, B, pr }; }
+      }
+      if (best) {
+        const { w, A, B, pr } = best;
+        const L = pr.L || 1;
+        const u = { x: (B.x - A.x) / L, y: (B.y - A.y) / L };
+        let n = { x: -u.y, y: u.x };
+        if ((f.x - pr.q.x) * n.x + (f.y - pr.q.y) * n.y < 0) n = { x: -n.x, y: -n.y };
+        const r = orient ? Math.atan2(-n.x, n.y) : rot;
+        // profondità del mobile perpendicolare al muro con la rotazione scelta
+        const c = Math.cos(r), s2 = Math.sin(r);
+        const depth = Math.abs(c * n.x + s2 * n.y) * f.w + Math.abs(-s2 * n.x + c * n.y) * f.d;
+        const gap = w.t / 2 + depth / 2 + 0.005;
+        const dist = (f.x - pr.q.x) * n.x + (f.y - pr.q.y) * n.y;
+        if (orient || Math.abs(dist - gap) < 0.15) {
+          // scorre lungo il muro sulla griglia, appoggiato alla parete
+          const along = G.snap(pr.t * L, step);
+          x = A.x + u.x * along + n.x * gap; y = A.y + u.y * along + n.y * gap;
+          rot = r;
+        }
+      }
+      return { x, y, rot };
+    }
+
+    _previewFurniture(world) {
+      if (!this.pendingItem) return;
+      const it = this.pendingItem;
+      const pos = this._furnitureSnap({ x: world.x, y: world.y, w: it.w, d: it.d, rot: 0 }, true);
+      const corners = P.furnitureCorners({ x: pos.x, y: pos.y, w: it.w, d: it.d, rot: pos.rot });
+      this.draft = { kind: 'chain', points: corners.concat([corners[0]]), snap: pos };
+      this.draw();
+    }
+
+    _placeFurniture(world) {
+      const it = this.pendingItem;
+      this.draft = null;
+      if (!it) return this.draw();
+      const pos = this._furnitureSnap({ x: world.x, y: world.y, w: it.w, d: it.d, rot: 0 }, true);
+      let fid;
+      this.mutate(plan => { fid = P.addFurniture(plan, it, pos.x, pos.y, pos.rot); }, 'furniture');
+      this.setTool('select');
+      this.select({ type: 'furniture', id: fid });
+      const w = this.warnings[fid];
+      if (w && w.length && this.hooks.onToast) this.hooks.onToast(w[0]);
+    }
+
+    rotateSelected(deg) {
+      if (this.sel.type !== 'furniture') return;
+      const id = this.sel.id;
+      this.mutate(plan => { const f = plan.furniture[id]; f.rot = CM.r3(((f.rot || 0) + deg * Math.PI / 180) % (Math.PI * 2)); }, 'rotate');
+    }
+
+    /* ---------- Impianti ---------- */
+    _fixtureSnap(p) {
+      const step = this.gridStep();
+      let best = null, bestD = 0.35;
+      for (const id in this.plan.walls) {
+        const w = this.plan.walls[id];
+        const A = this.plan.nodes[w.a], B = this.plan.nodes[w.b];
+        const pr = G.projSeg(p, A, B);
+        if (pr.t <= 0 || pr.t >= 1) continue;
+        if (pr.d < bestD) { bestD = pr.d; best = { w, A, B, pr }; }
+      }
+      if (!best) return { x: G.snap(p.x, step), y: G.snap(p.y, step) };
+      const { w, A, B, pr } = best;
+      const L = pr.L || 1;
+      const u = { x: (B.x - A.x) / L, y: (B.y - A.y) / L };
+      let n = { x: -u.y, y: u.x };
+      if ((p.x - pr.q.x) * n.x + (p.y - pr.q.y) * n.y < 0) n = { x: -n.x, y: -n.y };
+      const along = G.snap(pr.t * L, step);
+      const off = w.t / 2 + 0.08;
+      return { x: A.x + u.x * along + n.x * off, y: A.y + u.y * along + n.y * off };
+    }
+
+    _placeFixture(world) {
+      const pos = this._fixtureSnap(world);
+      const kind = this.fixtureKind;
+      let id;
+      this.mutate(plan => { id = P.addFixture(plan, kind, pos.x, pos.y); }, 'fixture');
+      this.draft = null;
+      this.select({ type: 'fixture', id });
+      this._emitHint();
+    }
+
+    /* ---------- Planimetria di sfondo ---------- */
+    _finishCalibrate(world) {
+      const d = this.draft;
+      this.draft = null;
+      this.draw();
+      if (!d || !this.plan.underlay) return;
+      const a = d.points[0], b = world;
+      const len = G.dist(a, b);
+      if (len < 0.05) { if (this.hooks.onToast) this.hooks.onToast('Trascina lungo un muro di cui conosci la misura'); return; }
+      if (this.hooks.onCalibrate) this.hooks.onCalibrate(a, b, len);
+    }
+
+    applyCalibration(a, len, real) {
+      if (!this.plan.underlay || !(real > 0) || !(len > 0)) return;
+      const k = real / len;
+      this.mutate(plan => {
+        const u = plan.underlay;
+        // scala attorno al punto a, che resta fermo
+        u.x = CM.r3(a.x + (u.x - a.x) * k);
+        u.y = CM.r3(a.y + (u.y - a.y) * k);
+        u.wM *= k; u.hM *= k;
+        u.calibrated = true;
+      }, 'calibrate');
+      this.setTool('select');
+      this.fit();
     }
   }
 

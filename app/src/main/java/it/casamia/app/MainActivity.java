@@ -12,6 +12,16 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.pdf.PdfRenderer;
+import android.os.ParcelFileDescriptor;
+import android.print.PrintAttributes;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintManager;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.widget.FrameLayout;
 import android.util.Log;
 import android.view.View;
 import android.webkit.ConsoleMessage;
@@ -52,6 +62,9 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
+    private Uri cameraUri;
+    private ShopPanel shopPanel;
+    private WebView printView;
 
     // Aggiornamento dell'app
     private long updateDownloadId = -1;
@@ -91,7 +104,16 @@ public class MainActivity extends Activity {
 
         web = new WebView(this);
         web.setBackgroundColor(0xFFF6F5F1);
-        setContentView(web);
+        FrameLayout root = new FrameLayout(this);
+        root.addView(web, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        setContentView(root);
+        shopPanel = new ShopPanel(this, root, web);
+        Notifier.ensureChannels(this);
+        try {
+            PriceWorker.schedule(this);
+        } catch (Exception e) {
+            Log.w(TAG, "Controllo prezzi non programmato", e);
+        }
 
         final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
@@ -128,8 +150,34 @@ public class MainActivity extends Activity {
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = callback;
+                cameraUri = null;
                 try {
-                    startActivityForResult(params.createIntent(), FILE_CHOOSER);
+                    Intent intent;
+                    if (params.isCaptureEnabled()) {
+                        // foto diretta dalla fotocamera
+                        File dir = new File(getCacheDir(), "foto");
+                        dir.mkdirs();
+                        File out = new File(dir, "foto-" + System.currentTimeMillis() + ".jpg");
+                        cameraUri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".file", out);
+                        intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                        intent.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
+                        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } else {
+                        intent = new Intent(Intent.ACTION_GET_CONTENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType("*/*");
+                        java.util.ArrayList<String> types = new java.util.ArrayList<>();
+                        for (String a : params.getAcceptTypes()) {
+                            for (String t : a.split(",")) {
+                                t = t.trim();
+                                if (t.isEmpty()) continue;
+                                if (t.startsWith(".")) t = "json".equals(t.substring(1)) ? "application/json" : "*/*";
+                                types.add(t);
+                            }
+                        }
+                        if (!types.isEmpty() && !types.contains("*/*")) intent.putExtra(Intent.EXTRA_MIME_TYPES, types.toArray(new String[0]));
+                    }
+                    startActivityForResult(intent, FILE_CHOOSER);
                 } catch (Exception e) {
                     fileCallback = null;
                     return false;
@@ -256,9 +304,14 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == FILE_CHOOSER) {
             if (fileCallback != null) {
-                fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+                Uri[] res;
+                if (cameraUri != null) res = resultCode == RESULT_OK ? new Uri[]{cameraUri} : null;
+                else if (resultCode == RESULT_OK && data != null && data.getData() != null) res = new Uri[]{data.getData()};
+                else res = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                fileCallback.onReceiveValue(res);
                 fileCallback = null;
             }
+            cameraUri = null;
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
@@ -267,6 +320,7 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
+        if (shopPanel != null && shopPanel.back()) return;
         // Lascia decidere all'app web (chiudere un pannello, tornare alla home...)
         web.evaluateJavascript("(window.CasaMia && CasaMia.onBack) ? CasaMia.onBack() : false", value -> {
             if (!"true".equals(value)) finish();
@@ -355,6 +409,126 @@ public class MainActivity extends Activity {
                 return;
             }
             runOnUiThread(() -> startUpdateDownload(url, version));
+        }
+
+        @JavascriptInterface
+        public void shareFile(String name, String mime, String base64) {
+            try {
+                File dir = new File(getCacheDir(), "condivisi");
+                dir.mkdirs();
+                File[] old = dir.listFiles();
+                if (old != null) for (File f : old) if (System.currentTimeMillis() - f.lastModified() > 86400000L) f.delete();
+                File out = new File(dir, name.replaceAll("[\\\\/:*?\"<>|]", "_"));
+                try (OutputStream os = new FileOutputStream(out)) {
+                    os.write(Base64.decode(base64, Base64.DEFAULT));
+                }
+                Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".file", out);
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType(mime);
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                send.putExtra(Intent.EXTRA_SUBJECT, name);
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                Intent chooser = Intent.createChooser(send, "Condividi " + name);
+                chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                runOnUiThread(() -> startActivity(chooser));
+            } catch (Exception e) {
+                Log.e(TAG, "Condivisione non riuscita", e);
+                toast("Condivisione non riuscita");
+            }
+        }
+
+        @JavascriptInterface
+        public void printHtml(String html, String title) {
+            runOnUiThread(() -> {
+                printView = new WebView(MainActivity.this);
+                printView.getSettings().setJavaScriptEnabled(false);
+                printView.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public void onPageFinished(WebView view, String url) {
+                        PrintManager pm = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+                        String job = (title == null || title.isEmpty() ? "Casa Mia" : title);
+                        PrintDocumentAdapter adapter = view.createPrintDocumentAdapter(job);
+                        pm.print(job, adapter, new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).build());
+                    }
+                });
+                printView.loadDataWithBaseURL("https://appassets.androidplatform.net/", html, "text/html", "utf-8", null);
+            });
+        }
+
+        @JavascriptInterface
+        public String pdfToImage(String base64) {
+            File tmp = new File(getCacheDir(), "planimetria.pdf");
+            try {
+                try (OutputStream os = new FileOutputStream(tmp)) {
+                    os.write(Base64.decode(base64, Base64.DEFAULT));
+                }
+                try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY);
+                     PdfRenderer r = new PdfRenderer(fd)) {
+                    if (r.getPageCount() < 1) return null;
+                    try (PdfRenderer.Page page = r.openPage(0)) {
+                        float k = 2200f / Math.max(page.getWidth(), page.getHeight());
+                        int w = Math.max(1, Math.round(page.getWidth() * k)), h = Math.max(1, Math.round(page.getHeight() * k));
+                        Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                        bmp.eraseColor(Color.WHITE);
+                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                        bmp.compress(Bitmap.CompressFormat.PNG, 100, bos);
+                        bmp.recycle();
+                        return Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP);
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "PDF non leggibile", e);
+                return null;
+            } finally {
+                tmp.delete();
+            }
+        }
+
+        @JavascriptInterface
+        public void openShop(String url) {
+            runOnUiThread(() -> shopPanel.open(url));
+        }
+
+        @JavascriptInterface
+        public void refreshPrices(String json) {
+            runOnUiThread(() -> shopPanel.refreshPrices(json));
+        }
+
+        @JavascriptInterface
+        public void setPriceWatch(String json) {
+            try {
+                org.json.JSONArray incoming = new org.json.JSONArray(json);
+                android.content.SharedPreferences p = getSharedPreferences(PriceWorker.PREFS, MODE_PRIVATE);
+                org.json.JSONArray old = new org.json.JSONArray(p.getString("lista", "[]"));
+                java.util.HashMap<String, Double> last = new java.util.HashMap<>();
+                for (int i = 0; i < old.length(); i++) {
+                    org.json.JSONObject o = old.getJSONObject(i);
+                    if (o.has("ultimo")) last.put(o.getString("id"), o.getDouble("ultimo"));
+                }
+                for (int i = 0; i < incoming.length(); i++) {
+                    org.json.JSONObject o = incoming.getJSONObject(i);
+                    Double l = last.get(o.optString("id"));
+                    if (l != null) o.put("ultimo", Math.min(l, o.optDouble("price", l)));
+                }
+                p.edit().putString("lista", incoming.toString()).apply();
+                PriceWorker.schedule(MainActivity.this);
+            } catch (Exception e) {
+                Log.w(TAG, "Lista prezzi non salvata", e);
+            }
+        }
+
+        @JavascriptInterface
+        public void scheduleReminder(String id, double when, String title, String text) {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                runOnUiThread(() -> requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 77));
+            }
+            Reminders.schedule(MainActivity.this, id, (long) when, title, text);
+        }
+
+        @JavascriptInterface
+        public void cancelReminder(String id) {
+            Reminders.cancel(MainActivity.this, id);
         }
 
         @JavascriptInterface

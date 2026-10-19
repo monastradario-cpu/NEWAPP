@@ -10,7 +10,7 @@ App Android per progettare, ristrutturare e arredare casa. La specifica completa
 Gli aggiornamenti si installano sopra la versione precedente senza perdere i progetti.
 
 ## Stato
-- **Tappa 1 — Pianta 2D**: stanze a rettangolo e muri liberi, porte (battente, scorrevole, a scomparsa), finestre, portefinestre, archi, pilastri e travi, stati dei muri (esistente / da demolire / da costruire), quote e superfici nette, annulla/ripeti, bussola, guida iniziale, progetto d'esempio, verticale e orizzontale.
+Versione completa (prima consegna): pianta 2D con arredo, impianti e planimetria di sfondo; finiture e costi con budget, varianti, preventivi e norme; vista 3D con passeggiata e sole; importazione dai negozi; acquisti, pagamenti e cantiere; assistente Gemini; esportazioni, condivisione, backup e storico versioni. Rimandato: metro AR con la fotocamera.
 
 ## Come è fatta
 - `app/src/main/java/...` — guscio Android (WebView) con salvataggio su file nella memoria dell'app.

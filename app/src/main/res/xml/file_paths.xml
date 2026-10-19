@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <external-files-path name="aggiornamenti" path="Download/" />
+    <cache-path name="condivisi" path="condivisi/" />
+    <cache-path name="foto" path="foto/" />
 </paths>
