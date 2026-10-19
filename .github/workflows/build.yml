@@ -61,6 +61,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: apk
@@ -71,7 +73,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Avvia l'app su emulatore Android e verifica
+      - name: Avvia l'app su emulatore Android e verifica che si veda
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
@@ -80,15 +82,36 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash -c 'APK=$(ls CasaMia-*.apk | head -1); adb install -r "$APK" && adb logcat -c && adb shell am start -W -n it.casamia.app/.MainActivity && sleep 30 && adb logcat -d -s CasaMia:I > logcat.txt; adb exec-out screencap -p > schermata.png; cat logcat.txt; grep -q CASAMIA_READY logcat.txt && grep -q CASAMIA_SELFTEST_OK logcat.txt && ! grep -qE "Uncaught|CASAMIA_SELFTEST_FAIL" logcat.txt'
+          script: bash tests/emulator_test.sh
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-emulatore
           path: |
-            logcat.txt
             schermata.png
+            diagnostica/
+
+  diagnostica:
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-emulatore
+      - name: Pubblica i log del test fallito
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: diagnostica-${{ github.run_number }}
+          name: Diagnostica test ${{ github.run_number }} (non installare)
+          prerelease: true
+          make_latest: false
+          body: Test su emulatore non superato. Log e schermata per l'analisi.
+          files: |
+            diagnostica/*
 
   release:
     needs: test

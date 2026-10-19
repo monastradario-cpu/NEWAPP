@@ -501,6 +501,14 @@
     show('home');
     if (first) setTimeout(() => U.tutorial(() => S.pref('guidaVista', true)), 300);
     console.log('CASAMIA_READY ' + (S.isNative ? 'android' : 'browser'));
+    setTimeout(() => {
+      const r = $('home').getBoundingClientRect();
+      console.log('CASAMIA_LAYOUT ' + JSON.stringify({
+        win: [innerWidth, innerHeight], dpr: devicePixelRatio, home: [Math.round(r.width), Math.round(r.height)],
+        cards: document.querySelectorAll('.project-card').length, overlay: !$('overlay').classList.contains('hidden'),
+        ua: navigator.userAgent.replace(/^.*(Chrome\/[\d.]+).*$/, '$1')
+      }));
+    }, 1500);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

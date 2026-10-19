@@ -111,6 +111,13 @@ public class MainActivity extends Activity {
 
         web.addJavascriptInterface(new Bridge(), "CasaMiaAndroid");
 
+        try {
+            android.content.pm.PackageInfo wv = WebView.getCurrentWebViewPackage();
+            Log.i(TAG, "WebView: " + (wv != null ? wv.packageName + " " + wv.versionName : "sconosciuta"));
+        } catch (Exception e) {
+            Log.w(TAG, "WebView: versione non disponibile");
+        }
+
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
         } else {
