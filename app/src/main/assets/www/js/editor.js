@@ -19,7 +19,8 @@
     furniture: 'Tocca dove mettere il mobile: vicino a un muro si appoggia da solo',
     fixture: 'Tocca dove mettere il punto d\u2019impianto: vicino a un muro si aggancia alla parete',
     calibrate: 'Trascina lungo un muro di cui conosci la misura, poi inserisci la lunghezza vera',
-    moveUnderlay: 'Trascina per spostare la planimetria sotto la pianta'
+    moveUnderlay: 'Trascina per spostare la planimetria sotto la pianta',
+    calibPick: 'Tocca il muro di cui conosci la misura (quelli blu sono i muri riconosciuti)'
   };
 
   class Editor {
@@ -109,6 +110,7 @@
     setTool(tool, kind) {
       this.finishChain();
       this.tool = tool;
+      if (tool !== 'calibPick') this.calib = null;
       if (kind) this.openingKind = kind;
       this.draft = null;
       if (tool !== 'select') this.select({});
@@ -543,6 +545,7 @@
         case 'fixture': this._placeFixture(world); break;
         case 'calibrate': this._finishCalibrate(world); break;
         case 'moveUnderlay': if (g.u0) this.commit('underlay'); break;
+        case 'calibPick': this._pickCalib(pos); break;
       }
     }
 
@@ -897,7 +900,42 @@
       if (this.hooks.onCalibrate) this.hooks.onCalibrate(a, b, len);
     }
 
+    /* ---------- Calibrazione automatica: muri riconosciuti ---------- */
+    setCalibCandidates(segs) {
+      this.setTool('calibPick');
+      this.calib = { segs, idx: 0 };
+      this._drawCalib();
+      this._emitHint();
+    }
+    _drawCalib() {
+      if (!this.calib) return;
+      this.draft = { kind: 'calib', segs: this.calib.segs, idx: this.calib.idx };
+      this.draw();
+    }
+    calibSeg() { return this.calib ? this.calib.segs[this.calib.idx] : null; }
+    _pickCalib(pos) {
+      if (!this.calib) return;
+      const w = this.toWorld(pos.x, pos.y);
+      let best = -1, bd = 30 / this.view.s;
+      this.calib.segs.forEach((sg, i) => { const d = G.projSeg(w, sg.a, sg.b).d; if (d < bd) { bd = d; best = i; } });
+      if (best < 0) { if (this.hooks.onToast) this.hooks.onToast('Tocca uno dei muri blu'); return; }
+      this.calib.idx = best;
+      this._drawCalib();
+      if (this.hooks.onCalibPick) this.hooks.onCalibPick(best);
+    }
+    // Inquadra un tratto nella parte di schermo indicata
+    revealSegment(sg, area) {
+      const b = { minX: Math.min(sg.a.x, sg.b.x), maxX: Math.max(sg.a.x, sg.b.x), minY: Math.min(sg.a.y, sg.b.y), maxY: Math.max(sg.a.y, sg.b.y) };
+      const m = 40;
+      const pb = P.bounds(this.plan) || b;
+      const s = Math.max(5, Math.min((area.w - m * 2) / Math.max(pb.maxX - pb.minX, 0.5), (area.h - m * 2) / Math.max(pb.maxY - pb.minY, 0.5)));
+      const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+      this.view = { s, x: area.x + area.w / 2 - cx * s, y: area.y + area.h / 2 - cy * s };
+      this.draw();
+    }
+
     applyCalibration(a, len, real) {
+      this.calib = null;
       if (!this.plan.underlay || !(real > 0) || !(len > 0)) return;
       const k = real / len;
       this.mutate(plan => {

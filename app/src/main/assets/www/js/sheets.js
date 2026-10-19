@@ -227,13 +227,14 @@
       sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn primary', text: 'Carica planimetria', onclick: () => ctx.loadUnderlay() })]));
       return;
     }
-    if (!u.calibrated) sheet.appendChild(el('div', { class: 'warn-box', text: 'Per prima cosa metti in scala: tocca “Calibra la scala” e trascina lungo un muro di cui conosci la misura.' }));
+    if (!u.calibrated) sheet.appendChild(el('div', { class: 'warn-box', text: 'Per prima cosa metti in scala: tocca “Calibra la scala”, riconosco io i muri e ti chiedo solo la misura di uno.' }));
     const range = el('input', { type: 'range', min: '0.1', max: '1', step: '0.05', value: String(u.opacity == null ? 0.5 : u.opacity), 'aria-label': 'Trasparenza' });
     range.addEventListener('input', () => { u.opacity = +range.value; ctx.editor.draw(); });
     range.addEventListener('change', () => ctx.save());
     sheet.appendChild(el('div', { class: 'field full' }, [el('span', { class: 'lbl', text: 'Visibilità della planimetria' }), el('div', { class: 'range-row' }, [range])]));
     sheet.appendChild(el('div', { class: 'actions' }, [
-      el('button', { class: 'btn primary', text: 'Calibra la scala', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('calibrate'); } }),
+      el('button', { class: 'btn primary', text: 'Calibra la scala', onclick: () => { ctx.closeUnderlay(true); ctx.calibrate(); } }),
+      el('button', { class: 'btn', text: 'Calibra indicando io il muro', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('calibrate'); } }),
       el('button', { class: 'btn', text: 'Sposta', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('moveUnderlay'); } }),
       el('button', { class: 'btn', text: 'Riconosci i muri', onclick: () => ctx.detectWalls(false) }),
       el('button', { class: 'btn', text: 'Riconosci con Gemini', onclick: () => ctx.detectWalls(true) }),

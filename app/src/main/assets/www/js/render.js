@@ -343,6 +343,26 @@
         dimLabel(ctx, v, last, d.cursor, 16, CM.fmt.num(G.dist(last, d.cursor), 2), C.accent, true);
       }
     }
+    if (d.kind === 'calib') {
+      d.segs.forEach((sg, i) => {
+        if (i === d.idx) return;
+        const a = toS(v, sg.a), b = toS(v, sg.b);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = 'rgba(31,79,209,0.45)'; ctx.lineWidth = 4; ctx.setLineDash([]); ctx.stroke();
+      });
+      const sg = d.segs[d.idx];
+      if (sg) {
+        const a = toS(v, sg.a), b = toS(v, sg.b);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 12; ctx.stroke();
+        ctx.strokeStyle = C.accent; ctx.lineWidth = 7; ctx.stroke();
+        for (const p of [a, b]) { ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 3; ctx.stroke(); }
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        ctx.font = '700 15px ' + SANS; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.beginPath(); ctx.arc(mx, my - 22, 14, 0, Math.PI * 2); ctx.fillStyle = C.accent; ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillText('?', mx, my - 21);
+      }
+    }
     if (d.snap) {
       const p = toS(v, d.snap);
       ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);

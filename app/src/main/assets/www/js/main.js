@@ -118,7 +118,7 @@
     bar.innerHTML = '';
     const activeTool = sheetMode === 'underlay' ? 'underlay' : editor.tool;
     for (const t of TOOLS) {
-      const on = activeTool === t.id || (t.id === 'underlay' && ['calibrate', 'moveUnderlay'].includes(editor.tool));
+      const on = activeTool === t.id || (t.id === 'underlay' && ['calibrate', 'moveUnderlay', 'calibPick'].includes(editor.tool));
       bar.appendChild(el('button', {
         class: 'chip' + (on ? ' active' : ''), 'data-tool': t.id, 'aria-pressed': on ? 'true' : 'false',
         html: U.icon(t.icon, 18) + '<span>' + t.label + '</span>', onclick: () => toolClick(t.id)
@@ -282,7 +282,7 @@
   function sheetCtx() {
     return {
       editor, project, mut: (fn, reason) => editor.mutate(fn, reason), refresh: renderSheet, save: scheduleSave,
-      loadUnderlay, detectWalls,
+      loadUnderlay, detectWalls, calibrate: () => autoCalibrate(),
       closeUnderlay: (keep) => { sheetMode = null; if (!keep) editor.setTool('select'); buildTools(); renderSheet(); }
     };
   }
@@ -449,13 +449,65 @@
       const img = await CM.underlay.fromFile(file);
       editor.mutate(pl => { pl.underlay = CM.underlay.create(img, pl); }, 'underlay');
       editor.fit();
-      sheetMode = 'underlay';
+      sheetMode = null;
       buildTools(); renderSheet();
-      const go = await U.dialog({ title: 'Metti in scala la planimetria', text: 'Trascina il dito lungo un muro di cui conosci la misura (meglio uno lungo), poi scrivi quanto misura davvero. Dopo puoi ricalcarla o farmi riconoscere i muri.', actions: [{ label: 'Più tardi', value: false }, { label: 'Calibra ora', value: true, primary: true }] });
-      if (go) { sheetMode = null; editor.setTool('calibrate'); buildTools(); renderSheet(); }
+      autoCalibrate();
     } catch (e) {
       U.toast(String(e.message) === 'PDF' ? 'I PDF si aprono nell’app sul telefono' : 'Non riesco ad aprire questo file');
     }
+  }
+
+  /* Calibrazione automatica: riconosco i muri, evidenzio il più lungo e chiedo solo la sua misura */
+  async function autoCalibrate() {
+    const u = editor.plan.underlay;
+    if (!u) return;
+    U.toast('Riconosco i muri della planimetria\u2026');
+    let segs = [];
+    try { segs = await CM.underlay.detectWalls(u); } catch (e) { console.error(e); }
+    segs = segs.map(sg => Object.assign(sg, { len: CM.geom.dist(sg.a, sg.b) })).filter(sg => sg.len > 0.4).sort((p, q) => q.len - p.len).slice(0, 30);
+    if (!segs.length) {
+      const go = await U.dialog({ title: 'Non trovo muri dritti', text: 'L\u2019immagine non \u00e8 abbastanza nitida per riconoscerli. Puoi indicare tu un muro trascinando il dito lungo di esso.', actions: [{ label: 'Pi\u00f9 tardi', value: false }, { label: 'Indico io il muro', value: true, primary: true }] });
+      if (go) { sheetMode = null; editor.setTool('calibrate'); buildTools(); renderSheet(); }
+      else { sheetMode = 'underlay'; buildTools(); renderSheet(); }
+      return;
+    }
+    sheetMode = null;
+    editor.select({});
+    editor.setCalibCandidates(segs);
+    buildTools(); renderSheet();
+    askCalibration();
+  }
+
+  async function askCalibration() {
+    const sg = editor.calibSeg();
+    if (!sg) return;
+    const st = $('stage').getBoundingClientRect();
+    editor.revealSegment(sg, { x: 0, y: 0, w: st.width - 72, h: st.height * 0.5 });
+    const input = el('input', { type: 'text', inputmode: 'decimal', class: 'num', 'aria-label': 'Misura reale del muro', placeholder: 'es. 4,20', enterkeyhint: 'done' });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') U.closeOverlay(input.value); });
+    const body = el('div', { class: 'field full', style: 'margin-top:10px' }, [el('label', { text: 'Misura reale' }), el('div', { class: 'input-unit' }, [input, el('span', { text: 'm' })])]);
+    const r = await U.dialog({
+      title: 'Quanto misura il muro evidenziato?',
+      text: 'L\u2019ho riconosciuto io: \u00e8 il muro blu con il punto di domanda. Inserisci la sua lunghezza vera. Se conosci meglio la misura di un altro muro blu, scegli \u201cAltro muro\u201d e toccalo.',
+      body,
+      actions: [{ label: 'Altro muro', value: 'other' }, { label: 'Indico io', value: 'manual' }, { label: 'Conferma', value: () => input.value, primary: true }]
+    });
+    if (r === 'other') { U.toast('Tocca il muro di cui conosci la misura'); return; }
+    if (r === 'manual') { editor.calib = null; editor.setTool('calibrate'); buildTools(); return; }
+    if (r == null) { editor.calib = null; editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); return; }
+    const real = CM.fmt.parseM(r, 'm');
+    if (!(real > 0.1)) { U.toast('Misura non valida'); return askCalibration(); }
+    const len = CM.geom.dist(sg.a, sg.b);
+    editor.applyCalibration(sg.a, len, real);
+    buildTools();
+    const segs = await CM.underlay.detectWalls(editor.plan.underlay).catch(() => []);
+    const ok = segs.length ? await U.confirmDialog('Planimetria in scala', 'Ho trovato ' + segs.length + ' tratti di muro. Li aggiungo alla pianta come muri esistenti, gi\u00e0 con le misure giuste? Poi potrai correggerli e chiudere le stanze. Puoi annullare.', 'Aggiungi i muri') : false;
+    if (ok) {
+      let n = 0;
+      editor.mutate(pl => { n = CM.underlay.applyWalls(pl, segs, 'esistente'); }, 'detect');
+      U.toast(n + ' muri aggiunti');
+    } else U.toast('Planimetria in scala');
+    sheetMode = 'underlay'; renderSheet();
   }
 
   async function onCalibrate(a, b, len) {
@@ -820,12 +872,14 @@
         if (actions.includes('undoPoint')) box.appendChild(el('button', { text: 'Annulla punto', onclick: () => editor.undoPoint() }));
         if (actions.includes('finish')) box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => editor.finishChain() }));
         if (editor.tool === 'fixture') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
+        if (editor.tool === 'calibPick') box.appendChild(el('button', { class: 'primary', text: 'Inserisci misura', onclick: () => askCalibration() }));
         if (editor.tool === 'calibrate' || editor.tool === 'moveUnderlay') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); } }));
       },
       onHistory: (u, r) => { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
       onToast: (t) => U.toast(t),
       onDraw: (view) => updateScale(view),
       onCalibrate,
+      onCalibPick: () => askCalibration(),
       onPin: (ids) => CM.tabs.showDiary(ids)
     });
 
