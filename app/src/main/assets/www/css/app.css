@@ -123,7 +123,7 @@ input, select { font: inherit; color: inherit; }
 .compass-n { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); font: 700 10px var(--mono); color: var(--new); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; }
 .zoomctl { position: absolute; right: 12px; top: 76px; display: flex; flex-direction: column; gap: 6px; }
 .zoomctl .icon-btn { background: rgba(255,255,255,0.94); }
-.scalebar { position: absolute; left: 14px; top: 14px; display: flex; align-items: center; gap: 6px; font: 500 11px var(--mono); color: var(--muted); pointer-events: none; }
+.scalebar { position: absolute; left: 14px; top: 14px; display: flex; align-items: center; gap: 6px; font: 500 11px var(--mono); color: var(--muted); pointer-events: none; background: rgba(246,245,241,0.85); padding: 4px 8px; border-radius: 8px; z-index: 2; }
 .scalebar .bar { height: 6px; border: 1.5px solid var(--ink-2); border-top: none; display: inline-block; }
 .hint {
   position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 10px; justify-content: space-between;
@@ -211,6 +211,12 @@ input, select { font: inherit; color: inherit; }
   transition: opacity 0.2s, transform 0.2s; text-align: center;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.top { bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 12px); z-index: 60; }
+.overlay:has(> .dialog.clear:last-child) { background: rgba(27,30,34,0.06); }
+.calib-nav { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; }
+.calib-nav button { flex: none; width: 56px; height: 52px; border-radius: 14px; border: 1px solid var(--line, #d9d6cf); background: var(--paper, #F6F5F1); font-size: 20px; color: var(--ink); }
+.calib-nav .what { flex: 1; text-align: center; font-size: 14px; color: var(--ink-2); line-height: 1.3; }
+.calib-nav .what b { display: block; font: 600 16px var(--mono); color: var(--accent); }
 
 /* ---------- Guida ---------- */
 .tutorial { width: 100%; max-width: 480px; background: var(--surface); border-radius: 22px 22px 0 0; padding: 22px 22px 18px; display: flex; flex-direction: column; gap: 14px; }
@@ -252,6 +258,8 @@ input, select { font: inherit; color: inherit; }
 /* ================= Schede Arredo, Costi, Lavori, 3D ================= */
 #editor.tab-other .tools-wrap, #editor.tab-other .stage, #editor.tab-other .summary { display: none; }
 .tabview { grid-row: 2 / 5; grid-column: 1 / -1; overflow-y: auto; padding: 4px 16px 24px; background: var(--paper); display: flex; flex-direction: column; gap: 12px; }
+.tabview > * { flex-shrink: 0; }
+.import-list > *, .picker > *, .chat-log > * { flex-shrink: 0; }
 .tab-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 8px; }
 .tab-head h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
 .tab-sec { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
@@ -371,3 +379,7 @@ input, select { font: inherit; color: inherit; }
 @media (orientation: landscape) and (max-height: 640px) {
   .tabview, .view3d-wrap { grid-row: 2 / 3; grid-column: 1 / -1; }
 }
+
+/* Tastiera aperta (telefono): nascondo barra in basso e riepilogo, il pannello prende pi\u00f9 spazio */
+body.kb .tabbar, body.kb .summary { display: none; }
+body.kb .sheet { max-height: 78%; }

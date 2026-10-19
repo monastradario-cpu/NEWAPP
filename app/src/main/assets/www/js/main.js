@@ -354,12 +354,32 @@
       const w = plan.walls[sel.id];
       const L = P.wallLen(plan, w);
       sheet.appendChild(sheetHead('Muro', CM.fmt.m(L)));
+      const line = P.wallLine(plan, sel.id);
+      const whole = line.length > 1 && editor.wallScope === 'all';
+      const targets = whole ? line : [sel.id];
+      const A = plan.nodes[w.a], B = plan.nodes[w.b];
+      const horiz = Math.abs(B.x - A.x) >= Math.abs(B.y - A.y);
+      const sideLabel = (end) => { const p = end === 'a' ? A : B, q = end === 'a' ? B : A; return horiz ? (p.x < q.x ? 'Sinistra' : 'Destra') : (p.y < q.y ? 'Sopra' : 'Sotto'); };
+      const side = editor.stretchSide || 'b';
       const fields = el('div', { class: 'fields' });
-      fields.appendChild(U.numField('Lunghezza', L, 'm', v => mut(pl => P.setWallLength(pl, sel.id, v)), { min: 0.1, max: 100 }));
-      fields.appendChild(U.numField('Spessore', w.t, 'cm', v => mut(pl => { pl.walls[sel.id].t = v; }), { min: 0.03, max: 1.2 }));
-      fields.appendChild(U.numField('Altezza', w.h || 2.7, 'cm', v => mut(pl => { pl.walls[sel.id].h = v; }), { min: 0.3, max: 8 }));
-      fields.appendChild(U.segField('Stato', Object.keys(CM.WALL_STATES).map(k => ({ value: k, label: CM.WALL_STATES[k].label, dot: k })), w.state, v => mut(pl => { pl.walls[sel.id].state = v; }, 'state')));
+      if (line.length > 1) fields.appendChild(U.segField('Modifica', [{ value: 'one', label: 'Solo questo tratto' }, { value: 'all', label: 'Tutta la parete (' + line.length + ' tratti)' }], whole ? 'all' : 'one', v => { editor.wallScope = v; renderSheet(); }));
+      fields.appendChild(U.numField('Lunghezza di questo tratto', L, 'm', v => mut(pl => P.stretchWall(pl, sel.id, v, editor.stretchSide || 'b')), { min: 0.1, max: 100 }));
+      fields.appendChild(U.segField('Allunga o accorcia verso', [{ value: 'a', label: sideLabel('a') }, { value: 'b', label: sideLabel('b') }], side, v => { editor.stretchSide = v; }));
+      fields.appendChild(U.numField('Spessore', w.t, 'cm', v => mut(pl => { targets.forEach(id => { if (pl.walls[id]) pl.walls[id].t = v; }); }), { min: 0.03, max: 1.2 }));
+      fields.appendChild(U.numField('Altezza', w.h || 2.7, 'cm', v => mut(pl => { targets.forEach(id => { if (pl.walls[id]) pl.walls[id].h = v; }); }), { min: 0.3, max: 8 }));
+      fields.appendChild(U.segField('Stato', Object.keys(CM.WALL_STATES).map(k => ({ value: k, label: CM.WALL_STATES[k].label, dot: k })), w.state, v => mut(pl => { targets.forEach(id => { if (pl.walls[id]) pl.walls[id].state = v; }); }, 'state')));
       sheet.appendChild(fields);
+      if (line.length > 1) {
+        // tutti i tratti della parete, ognuno modificabile
+        const tot = line.reduce((a, id) => a + P.wallLen(plan, id), 0);
+        const list = el('div', { class: 'fields' });
+        list.appendChild(el('div', { class: 'field full' }, [el('label', { text: 'Tratti di questa parete \u00b7 totale ' + CM.fmt.m(tot) })]));
+        line.forEach((id, i) => {
+          const f = U.numField('Tratto ' + (i + 1) + (id === sel.id ? ' (selezionato)' : ''), P.wallLen(plan, id), 'm', v => mut(pl => P.stretchWall(pl, id, v, editor.stretchSide || 'b')), { min: 0.1, max: 100 });
+          list.appendChild(f);
+        });
+        sheet.appendChild(list);
+      }
       const ops = Object.keys(plan.openings).filter(o => plan.openings[o].wall === sel.id).length;
       const wsf = P.wallSurface(plan, sel.id);
       sheet.appendChild(el('div', { class: 'stats' }, [
@@ -483,19 +503,36 @@
   }
 
   async function askCalibration() {
-    const sg = editor.calibSeg();
-    if (!sg) return;
+    if (!editor.calibSeg()) return;
     const st = $('stage').getBoundingClientRect();
-    editor.revealSegment(sg, { x: 0, y: 0, w: st.width - 72, h: st.height * 0.5 });
+    // inquadro tutta la planimetria nello spazio libero sopra il dialogo
+    let freeH = st.height * 0.42;
+    const reveal = () => {
+      const u = editor.plan.underlay;
+      const sg = u ? { a: { x: u.x, y: u.y }, b: { x: u.x + u.wM, y: u.y + u.hM } } : editor.calibSeg();
+      if (sg) editor.revealSegment(sg, { x: 0, y: 0, w: st.width - 72, h: freeH });
+    };
+    reveal();
+    setTimeout(() => { const d = document.querySelector('.dialog.clear'); if (d) { freeH = Math.max(160, d.getBoundingClientRect().top - st.top - 8); reveal(); } }, 60);
     const input = el('input', { type: 'text', inputmode: 'decimal', class: 'num', 'aria-label': 'Misura reale del muro', placeholder: 'es. 4,20', enterkeyhint: 'done' });
     input.addEventListener('keydown', e => { if (e.key === 'Enter') U.closeOverlay(input.value); });
-    const body = el('div', { class: 'field full', style: 'margin-top:10px' }, [el('label', { text: 'Misura reale' }), el('div', { class: 'input-unit' }, [input, el('span', { text: 'm' })])]);
+    const what = el('div', { class: 'what' });
+    const upd = () => { what.innerHTML = '<b>Muro ' + (editor.calib.idx + 1) + ' di ' + editor.calib.segs.length + '</b>quello blu con il ?'; };
+    const step = (d) => { editor.stepCalib(d); upd(); };
+    const nav = el('div', { class: 'calib-nav' }, [
+      el('button', { 'aria-label': 'Muro precedente', text: '\u25C0', onclick: () => step(-1) }),
+      what,
+      el('button', { 'aria-label': 'Muro successivo', text: '\u25B6', onclick: () => step(1) })
+    ]);
+    upd();
+    const body = el('div', {}, [nav, el('div', { class: 'field full', style: 'margin-top:6px' }, [el('label', { text: 'Misura reale del muro blu' }), el('div', { class: 'input-unit' }, [input, el('span', { text: 'm' })])])]);
     const r = await U.dialog({
-      title: 'Quanto misura il muro evidenziato?',
-      text: 'L\u2019ho riconosciuto io: \u00e8 il muro blu con il punto di domanda. Inserisci la sua lunghezza vera. Se conosci meglio la misura di un altro muro blu, scegli \u201cAltro muro\u201d e toccalo.',
-      body,
-      actions: [{ label: 'Altro muro', value: 'other' }, { label: 'Uso la barra di scala o un altro tratto', value: 'manual' }, { label: 'Conferma', value: () => input.value, primary: true }]
+      title: 'Scegli un muro di cui sai la misura',
+      text: 'Con le frecce passi da un muro all\u2019altro: quando \u00e8 evidenziato quello giusto, scrivi la sua lunghezza vera.',
+      body, clear: true,
+      actions: [{ label: 'Uso la barra di scala', value: 'manual' }, { label: 'Conferma', value: () => input.value, primary: true }]
     });
+    const sg = editor.calibSeg();
     if (r === 'other') { U.toast('Tocca il muro di cui conosci la misura'); return; }
     if (r === 'manual') { editor.calib = null; editor.setTool('calibrate'); buildTools(); U.toast('Trascina lungo la barra di scala (es. \u201c10 metri\u201d) o un tratto di cui sai la misura'); return; }
     if (r == null) { editor.calib = null; editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); return; }
@@ -522,6 +559,7 @@
       try { r = CM.plan.autoRooms(pl); } catch (e) { console.error(e); }
     }, 'detect');
     sheetMode = null; editor.select({}); buildTools(); renderSheet(); updateSummary();
+    editor.fit();
     const go = await U.dialog({
       title: n + ' muri e ' + r + ' stanze',
       text: 'Ora la casa \u00e8 in pianta e nel 3D. Per lavorarci: tocca un muro per cambiarne lunghezza e spessore o per segnarlo \u201cda demolire\u201d (giallo) o \u201cnuovo\u201d (rosso); con Muro disegni le pareti nuove; tocca una stanza per darle nome e tipo. Se un muro \u00e8 sbagliato lo selezioni ed Elimina, o usi Cancella zona.',
@@ -1001,6 +1039,19 @@
       else if (e.key === 'Delete' || e.key === 'Backspace') editor.deleteSelection();
       else if (e.key === 'Escape') CM.onBack();
     });
+    // Tastiera del telefono: quando si apre la finestra si accorcia
+    let maxH = window.innerHeight;
+    const kbCheck = () => {
+      const h = window.innerHeight;
+      if (h > maxH) maxH = h;
+      const kb = maxH - h > 140 && document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+      document.body.classList.toggle('kb', !!kb);
+      if (kb) setTimeout(() => { const a = document.activeElement; if (a && a.scrollIntoView) a.scrollIntoView({ block: 'center' }); }, 60);
+    };
+    window.addEventListener('resize', kbCheck);
+    document.addEventListener('focusout', () => setTimeout(kbCheck, 120));
+    document.addEventListener('focusin', () => setTimeout(kbCheck, 350));
+    window.addEventListener('orientationchange', () => { maxH = 0; setTimeout(() => { maxH = window.innerHeight; kbCheck(); }, 400); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); else if (view3d && tab === '3d') view3d.dirty = true; });
 
     const errs = CM.selfTest();

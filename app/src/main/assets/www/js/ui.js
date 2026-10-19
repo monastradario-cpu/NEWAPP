@@ -68,6 +68,7 @@
   function toast(text) {
     const t = document.getElementById('toast');
     t.textContent = text;
+    t.classList.toggle('top', stack.length > 0); // con un dialogo aperto il messaggio va in alto, non sopra i pulsanti
     t.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
@@ -78,6 +79,7 @@
   function openOverlay(content, onClose) {
     const ov = document.getElementById('overlay');
     if (ov.firstChild) ov.firstChild.style.display = 'none';
+    const tt = document.getElementById('toast'); if (tt) tt.classList.add('top');
     ov.appendChild(content);
     ov.classList.remove('hidden');
     const entry = { content, onClose };
@@ -102,7 +104,7 @@
     return new Promise(resolve => {
       const actions = (opts.actions || [{ label: 'OK', value: true, primary: true }]).map(a =>
         el('button', { class: 'btn' + (a.primary ? ' primary' : '') + (a.danger ? ' danger' : ''), onclick: () => closeOverlay(typeof a.value === 'function' ? a.value() : a.value) }, a.label));
-      const box = el('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title }, [
+      const box = el('div', { class: 'dialog' + (opts.clear ? ' clear' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title }, [
         el('h2', { text: opts.title }),
         opts.text ? el('p', { text: opts.text }) : null,
         opts.body || null,

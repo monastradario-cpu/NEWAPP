@@ -165,10 +165,25 @@
     }
   }
 
-  function dimLabel(ctx, v, A, B, offsetPx, text, color, bold) {
+  // Rettangoli delle scritte gi\u00e0 disegnate: evito le sovrapposizioni
+  const hitBox = (boxes, r) => boxes && boxes.some(q => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+
+  function dimLabel(ctx, v, A, B, offsetPx, text, color, bold, boxes) {
     const a = toS(v, A), b = toS(v, B);
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len < 34) return;
+    if (boxes) {
+      ctx.font = (bold ? '600 ' : '500 ') + '10.5px ' + MONO;
+      const tw = ctx.measureText(text).width + 6;
+      if (tw > len - 6 && !bold) return;
+      const nx0 = -(b.y - a.y) / len, ny0 = (b.x - a.x) / len;
+      const cx = (a.x + b.x) / 2 + nx0 * offsetPx, cy = (a.y + b.y) / 2 + ny0 * offsetPx;
+      const horiz = Math.abs(b.x - a.x) >= Math.abs(b.y - a.y);
+      const hw = horiz ? tw / 2 : 7, hh = horiz ? 7 : tw / 2;
+      const r = { x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh };
+      if (!bold && hitBox(boxes, r)) return;
+      boxes.push(r);
+    }
     let ang = Math.atan2(b.y - a.y, b.x - a.x);
     const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
     const mx = (a.x + b.x) / 2 + nx * offsetPx, my = (a.y + b.y) / 2 + ny * offsetPx;
@@ -269,7 +284,8 @@
         polyPath(ctx, v, wallQuad(plan, plan.walls[sel.id], true));
         ctx.strokeStyle = C.accent; ctx.lineWidth = 2.5; ctx.stroke();
       }
-      // Etichette stanze
+      // Etichette stanze (solo se ci stanno)
+      const boxes = [];
       for (const id in plan.rooms) {
         const room = plan.rooms[id];
         const pts = P.roomPts(plan, room);
@@ -280,21 +296,30 @@
         const minSide = Math.sqrt(st.gross) * v.s;
         if (minSide < 46) continue;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.font = '600 ' + fs + 'px ' + SANS;
         const selected = sel.type === 'room' && sel.id === id;
-        haloText(ctx, room.name, lp.x, lp.y - fs * 0.62, selected ? C.accent : C.ink);
-        ctx.font = '500 ' + (fs - 1.5) + 'px ' + MONO;
-        haloText(ctx, CM.fmt.area(st.net), lp.x, lp.y + fs * 0.62, C.muted);
+        const sp = pts.map(q => toS(v, q));
+        const roomW = Math.max(...sp.map(q => q.x)) - Math.min(...sp.map(q => q.x));
+        let f = fs; ctx.font = '600 ' + f + 'px ' + SANS;
+        let nw = ctx.measureText(room.name).width;
+        while (nw > roomW - 12 && f > 9) { f -= 1; ctx.font = '600 ' + f + 'px ' + SANS; nw = ctx.measureText(room.name).width; }
+        if (nw > roomW - 8 && !selected) continue;
+        haloText(ctx, room.name, lp.x, lp.y - f * 0.62, selected ? C.accent : C.ink);
+        ctx.font = '500 ' + (f - 1.5) + 'px ' + MONO;
+        const at = CM.fmt.area(st.net), aw = ctx.measureText(at).width;
+        if (aw < roomW - 8) haloText(ctx, at, lp.x, lp.y + f * 0.62, C.muted);
+        const bw = Math.max(nw, aw) / 2 + 3;
+        boxes.push({ x0: lp.x - bw, x1: lp.x + bw, y0: lp.y - f * 1.3, y1: lp.y + f * 1.3 });
       }
       // Quote dei muri
       if (opts.showDims || sel.type === 'wall') {
-        for (const id in plan.walls) {
+        const ids = Object.keys(plan.walls).sort((p, q) => (sel.id === p ? -1 : sel.id === q ? 1 : 0) || (P.wallLen(plan, plan.walls[q]) - P.wallLen(plan, plan.walls[p])));
+        for (const id of ids) {
           const isSel = sel.type === 'wall' && sel.id === id;
           if (!opts.showDims && !isSel) continue;
           const w = plan.walls[id];
           const A = plan.nodes[w.a], B = plan.nodes[w.b];
           const off = w.t * v.s / 2 + 9;
-          dimLabel(ctx, v, A, B, off, CM.fmt.num(G.dist(A, B), 2), isSel ? C.accent : C.muted, isSel);
+          dimLabel(ctx, v, A, B, off, CM.fmt.num(G.dist(A, B), 2), isSel ? C.accent : C.muted, isSel, boxes);
         }
       }
       // Maniglie dei vertici

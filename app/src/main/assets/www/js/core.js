@@ -478,6 +478,72 @@
     return true;
   };
 
+  /* Cambia la lunghezza di un muro "stirando" la casa: tutto ci\u00f2 che sta oltre l'estremo
+     che si sposta (muri, stanze, arredi, impianti) trasla insieme, cos\u00ec gli angoli restano dritti.
+     side: 'b' sposta l'estremo finale, 'a' quello iniziale. */
+  P.stretchWall = function (plan, wid, len, side) {
+    const w = plan.walls[wid];
+    if (!w) return false;
+    const A = plan.nodes[w.a], B = plan.nodes[w.b];
+    const L = G.dist(A, B);
+    if (L < 1e-6 || !(len > 0.05)) return false;
+    const ux = (B.x - A.x) / L, uy = (B.y - A.y) / L, d = len - L;
+    const eps = 0.02, ax = A.x, ay = A.y;
+    const t = (p) => (p.x - ax) * ux + (p.y - ay) * uy;
+    const moves = side === 'a' ? (p) => t(p) <= eps : (p) => t(p) >= L - eps;
+    const mx = side === 'a' ? -ux * d : ux * d, my = side === 'a' ? -uy * d : uy * d;
+    const mv = (p) => { p.x = r3(p.x + mx); p.y = r3(p.y + my); };
+    // aperture sui muri il cui estremo iniziale si sposta: tengo ferma la loro posizione reale
+    const keep = [];
+    for (const oid in plan.openings) {
+      const op = plan.openings[oid], ow = plan.walls[op.wall];
+      if (!ow) continue;
+      const pa = plan.nodes[ow.a], pb = plan.nodes[ow.b];
+      if (moves(pa) && !moves(pb)) {
+        const l = G.dist(pa, pb); if (l < 1e-6) continue;
+        keep.push({ op, ow, x: pa.x + (pb.x - pa.x) / l * op.pos, y: pa.y + (pb.y - pa.y) / l * op.pos });
+      }
+    }
+    for (const id in plan.nodes) { const n = plan.nodes[id]; if (moves(n)) mv(n); }
+    for (const id in plan.furniture || {}) if (moves(plan.furniture[id])) mv(plan.furniture[id]);
+    for (const id in plan.fixtures || {}) if (moves(plan.fixtures[id])) mv(plan.fixtures[id]);
+    for (const id in plan.columns || {}) if (moves(plan.columns[id])) mv(plan.columns[id]);
+    for (const id in plan.beams || {}) {
+      const bm = plan.beams[id];
+      if (moves({ x: bm.x1, y: bm.y1 })) { bm.x1 = r3(bm.x1 + mx); bm.y1 = r3(bm.y1 + my); }
+      if (moves({ x: bm.x2, y: bm.y2 })) { bm.x2 = r3(bm.x2 + mx); bm.y2 = r3(bm.y2 + my); }
+    }
+    for (const k of keep) {
+      const pa = plan.nodes[k.ow.a], pb = plan.nodes[k.ow.b], l = G.dist(pa, pb);
+      if (l > 1e-6) k.op.pos = r3(((k.x - pa.x) * (pb.x - pa.x) + (k.y - pa.y) * (pb.y - pa.y)) / l);
+    }
+    P.tidy(plan);
+    return true;
+  };
+
+  // Tutti i tratti allineati che formano la stessa parete (spezzata dagli incroci a T)
+  P.wallLine = function (plan, wid) {
+    const w0 = plan.walls[wid];
+    if (!w0) return [];
+    const A = plan.nodes[w0.a], B = plan.nodes[w0.b], L = G.dist(A, B);
+    if (L < 1e-6) return [wid];
+    const ux = (B.x - A.x) / L, uy = (B.y - A.y) / L;
+    const onLine = (p) => Math.abs((p.x - A.x) * uy - (p.y - A.y) * ux) < 0.02;
+    const out = [wid], seen = new Set([wid]);
+    let grow = true;
+    while (grow) {
+      grow = false;
+      for (const id in plan.walls) {
+        if (seen.has(id)) continue;
+        const w = plan.walls[id];
+        if (!onLine(plan.nodes[w.a]) || !onLine(plan.nodes[w.b])) continue;
+        if (out.some(o => { const q = plan.walls[o]; return q.a === w.a || q.a === w.b || q.b === w.a || q.b === w.b; })) { out.push(id); seen.add(id); grow = true; }
+      }
+    }
+    const t = (id) => { const w = plan.walls[id], a = plan.nodes[w.a], b = plan.nodes[w.b]; return Math.min((a.x - A.x) * ux + (a.y - A.y) * uy, (b.x - A.x) * ux + (b.y - A.y) * uy); };
+    return out.sort((p, q) => t(p) - t(q));
+  };
+
   P.moveNodes = function (plan, ids, dx, dy) {
     for (const id of ids) { const n = plan.nodes[id]; if (n) { n.x = r3(n.x + dx); n.y = r3(n.y + dy); } }
   };

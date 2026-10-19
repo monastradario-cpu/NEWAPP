@@ -137,7 +137,7 @@
       this.hooks = hooks || {};
       this.mode = 'orbit';
       this.phase = 'dopo';
-      this.lowWalls = false;
+      this.lowWalls = true; // dall'alto si vede dentro le stanze; in passeggiata i muri tornano interi
       this.day = 172; this.hour = 15;
       this.ready = false;
       this.dirty = true;
@@ -256,7 +256,8 @@
       }
 
       // muri
-      const wallH = (w) => (this.lowWalls ? 1.05 : (w.h || 2.7));
+      const low = this.lowWalls && this.mode !== 'walk';
+      const wallH = (w) => (low ? 1.05 : (w.h || 2.7));
       for (const id in plan.walls) {
         const w = plan.walls[id];
         if (this.phase === 'dopo' && w.state === 'demolire') continue;
@@ -266,11 +267,11 @@
       // pilastri e travi
       for (const id in plan.columns) {
         const c = plan.columns[id];
-        const h = this.lowWalls ? 1.05 : 2.7;
+        const h = low ? 1.05 : 2.7;
         const m = new T.Mesh(new T.BoxGeometry(c.w, h, c.d), mat({ color: '#E7E4DE' }));
         m.position.set(c.x, h / 2, c.y); m.castShadow = m.receiveShadow = true; this.group.add(m);
       }
-      if (!this.lowWalls) for (const id in plan.beams) {
+      if (!low) for (const id in plan.beams) {
         const bm = plan.beams[id];
         const len = Math.hypot(bm.x2 - bm.x1, bm.y2 - bm.y1);
         const m = new T.Mesh(new T.BoxGeometry(len, 0.3, bm.w), mat({ color: '#E7E4DE' }));
@@ -613,7 +614,7 @@
       this.dirty = true;
     }
 
-    setMode(m) { this.mode = m; this.walk.move = { x: 0, y: 0 }; this.dirty = true; }
+    setMode(m) { const ch = m !== this.mode; this.mode = m; this.walk.move = { x: 0, y: 0 }; if (ch && this.lowWalls && this.project) this.build(this.project); this.dirty = true; }
 
     _render() {
       const T = window.THREE;
