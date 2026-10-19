@@ -554,6 +554,28 @@
   };
 
   // Pulizia: muri degeneri o doppi, aperture orfane, nodi inutilizzati, stanze degeneri
+  // Elimina tutto ciò che sta dentro un rettangolo (in metri). Ritorna quanti elementi ha tolto.
+  P.eraseArea = function (plan, r) {
+    const inside = (p) => p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1;
+    let n = 0;
+    for (const id of Object.keys(plan.rooms)) {
+      const pts = P.roomPts(plan, plan.rooms[id]);
+      if (pts.length && (pts.every(inside) || inside(G.centroid(pts)))) { delete plan.rooms[id]; n++; }
+    }
+    for (const id of Object.keys(plan.walls)) {
+      const w = plan.walls[id], A = plan.nodes[w.a], B = plan.nodes[w.b];
+      if (!A || !B) continue;
+      if (inside({ x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 }) && (inside(A) || inside(B))) { delete plan.walls[id]; n++; }
+    }
+    const zap = (coll, get) => { for (const id of Object.keys(coll || {})) if (inside(get(coll[id]))) { delete coll[id]; n++; } };
+    zap(plan.furniture, f => f);
+    zap(plan.fixtures, f => f);
+    zap(plan.columns, c => c);
+    zap(plan.beams, b => ({ x: (b.x1 + b.x2) / 2, y: (b.y1 + b.y2) / 2 }));
+    P.tidy(plan);
+    return n;
+  };
+
   P.tidy = function (plan) {
     const seen = {};
     for (const id of Object.keys(plan.walls)) {

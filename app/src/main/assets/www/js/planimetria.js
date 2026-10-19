@@ -175,6 +175,19 @@
       return Object.assign({}, u, { cropped: true, src: c.toDataURL('image/jpeg', 0.9), pxW: c.width, pxH: c.height, x: u.x + x0 / kx, y: u.y + y0 / ky, wM: (x1 - x0) / kx, hM: (y1 - y0) / ky });
     },
 
+    // Sbianca una zona della planimetria (parti che non devono entrare nella pianta)
+    async mask(u, r) {
+      const im = await loadImg(u.src);
+      const kx = u.pxW / u.wM, ky = u.pxH / u.hM;
+      const c = document.createElement('canvas'); c.width = u.pxW; c.height = u.pxH;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(im, 0, 0, c.width, c.height);
+      const x0 = (r.x0 - u.x) * kx, y0 = (r.y0 - u.y) * ky;
+      ctx.fillRect(x0, y0, (r.x1 - r.x0) * kx, (r.y1 - r.y0) * ky);
+      return Object.assign({}, u, { src: c.toDataURL('image/jpeg', 0.9) });
+    },
+
     applyWalls(plan, segs, state) {
       segs = U.mergeDoubleLines(segs);
       let n = 0;

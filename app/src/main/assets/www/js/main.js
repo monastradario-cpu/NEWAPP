@@ -110,7 +110,8 @@
     { id: 'fixture', label: 'Impianti', icon: 'plug' },
     { id: 'column', label: 'Pilastro', icon: 'column' },
     { id: 'beam', label: 'Trave', icon: 'beam' },
-    { id: 'underlay', label: 'Planimetria', icon: 'image' }
+    { id: 'underlay', label: 'Planimetria', icon: 'image' },
+    { id: 'erase', label: 'Cancella zona', icon: 'trash' }
   ];
 
   function buildTools() {
@@ -527,6 +528,23 @@
     } catch (e) { U.toast('Ritaglio troppo piccolo: riprova'); }
   }
 
+  // Cancella una parte della casa (e, se vuoi, anche dalla planimetria sotto)
+  async function onErase(rect) {
+    if (rect.x1 - rect.x0 < 0.1 || rect.y1 - rect.y0 < 0.1) return;
+    const u = editor.plan.underlay;
+    const actions = [{ label: 'Annulla', value: null }];
+    if (u) actions.push({ label: 'Anche dalla planimetria', value: 'both' });
+    actions.push({ label: 'Elimina', value: 'plan', primary: true });
+    const r = await U.dialog({ title: 'Eliminare questa zona?', text: 'Tolgo muri, stanze, arredi e impianti dentro il rettangolo.' + (u ? ' Con “Anche dalla planimetria” la zona viene sbiancata anche sul disegno caricato, così non viene più riconosciuta.' : '') + ' Puoi sempre annullare.', actions });
+    if (!r) { editor.draw(); return; }
+    let nu = null;
+    if (r === 'both' && u) { try { nu = await CM.underlay.mask(u, rect); } catch (e) { U.toast('Non riesco a modificare la planimetria'); } }
+    let n = 0;
+    editor.mutate(pl => { n = CM.plan.eraseArea(pl, rect); if (nu) pl.underlay = nu; }, 'erase');
+    editor.select({});
+    U.toast(n ? n + ' elementi eliminati · puoi annullare' : (nu ? 'Zona tolta dalla planimetria' : 'Nessun elemento in quella zona'));
+  }
+
   async function onCalibrate(a, b, len) {
     const v = await U.promptDialog('Quanto misura questo muro?', '', { label: 'Misura reale', unit: 'm', inputmode: 'decimal', mono: true, text: 'Sulla planimetria hai tracciato ' + CM.fmt.m(len) + ' (scala provvisoria).' });
     if (v == null) { editor.setTool('select'); buildTools(); return; }
@@ -894,6 +912,7 @@
         if (actions.includes('undoPoint')) box.appendChild(el('button', { text: 'Annulla punto', onclick: () => editor.undoPoint() }));
         if (actions.includes('finish')) box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => editor.finishChain() }));
         if (editor.tool === 'fixture') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
+        if (editor.tool === 'erase') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
         if (editor.tool === 'cropUnderlay') box.appendChild(el('button', { text: 'Salta', onclick: () => { editor.setTool('select'); buildTools(); autoCalibrate(); } }));
         if (editor.tool === 'calibPick') box.appendChild(el('button', { class: 'primary', text: 'Inserisci misura', onclick: () => askCalibration() }));
         if (editor.tool === 'calibrate' || editor.tool === 'moveUnderlay') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); } }));
@@ -904,6 +923,7 @@
       onCalibrate,
       onCalibPick: () => askCalibration(),
       onCrop,
+      onErase,
       onPin: (ids) => CM.tabs.showDiary(ids)
     });
 

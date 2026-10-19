@@ -343,6 +343,12 @@
         dimLabel(ctx, v, last, d.cursor, 16, CM.fmt.num(G.dist(last, d.cursor), 2), C.accent, true);
       }
     }
+    if (d.kind === 'erase') {
+      const a = toS(v, d.a), b = toS(v, d.b);
+      const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+      ctx.fillStyle = 'rgba(200,40,40,0.18)'; ctx.fillRect(x, y, w, h);
+      ctx.setLineDash([8, 5]); ctx.strokeStyle = '#C62828'; ctx.lineWidth = 2.5; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+    }
     if (d.kind === 'crop') {
       const a = toS(v, d.a), b = toS(v, d.b);
       const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
