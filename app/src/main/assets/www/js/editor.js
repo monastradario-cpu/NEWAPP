@@ -63,7 +63,7 @@
 
     resize() {
       const rect = this.canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = Math.max(1, Math.round(rect.width)), h = Math.max(1, Math.round(rect.height));
       if (w === this.W && h === this.H && this.canvas.width === Math.round(w * dpr)) return;
       const oldW = this.W, oldH = this.H;

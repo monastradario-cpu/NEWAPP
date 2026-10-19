@@ -151,14 +151,15 @@
       const T = window.THREE;
       if (!T) return false;
       try {
-        this.renderer = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        this.renderer = new T.WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
       } catch (e) {
         console.error('WebGL non disponibile: ' + e.message);
         return false;
       }
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
       this.renderer.shadowMap.enabled = true;
-      this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+      this.renderer.shadowMap.type = T.PCFShadowMap;
+      this.renderer.shadowMap.autoUpdate = true;
       this.renderer.toneMapping = T.ACESFilmicToneMapping;
       this.renderer.toneMappingExposure = 1.05;
       this.container.appendChild(this.renderer.domElement);
@@ -170,28 +171,40 @@
       this.scene.add(this.hemi);
       this.sunLight = new T.DirectionalLight('#FFF4E0', 2.2);
       this.sunLight.castShadow = true;
-      this.sunLight.shadow.mapSize.set(2048, 2048);
+      this.sunLight.shadow.mapSize.set(1024, 1024);
       this.sunLight.shadow.bias = -0.0006;
       this.scene.add(this.sunLight, this.sunLight.target);
       this.group = new T.Group();
       this.scene.add(this.group);
       this._bind();
       this.ready = true;
-      const loop = () => {
-        this._raf = requestAnimationFrame(loop);
-        if (this.mode === 'walk' && (this.walk.move.x || this.walk.move.y)) this._stepWalk();
-        if (this.dirty && this.visible) { this.dirty = false; this._render(); }
-      };
-      loop();
+      // Disegno solo quando serve: niente ciclo continuo (consuma batteria e scalda il telefono)
+      let d = true;
+      Object.defineProperty(this, 'dirty', { get: () => d, set: (x) => { d = x; if (x) this._kick(); }, configurable: true });
+      this._kick();
       return true;
     }
 
-    setVisible(v) { this.visible = v; if (v) { this.resize(); this.dirty = true; } }
+    _kick() {
+      if (this._raf || !this.ready || !this.visible || document.hidden) return;
+      this._raf = requestAnimationFrame(() => {
+        this._raf = 0;
+        if (!this.visible || document.hidden) return;
+        const moving = this.mode === 'walk' && (this.walk.move.x || this.walk.move.y);
+        if (moving) this._stepWalk();
+        if (this.dirty || moving) { this.dirty = false; this._render(); }
+        if (moving) this._kick();
+      });
+    }
+
+    setVisible(v) { this.visible = v; if (v) { this.resize(); this.dirty = true; } else if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; } }
 
     resize() {
       if (!this.ready) return;
       const r = this.container.getBoundingClientRect();
-      const w = Math.max(1, r.width), h = Math.max(1, r.height);
+      const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+      if (w === this._w && h === this._h) return;
+      this._w = w; this._h = h;
       this.renderer.setSize(w, h, false);
       this.renderer.domElement.style.width = w + 'px';
       this.renderer.domElement.style.height = h + 'px';
@@ -656,7 +669,7 @@
     }
 
     // Movimento con il joystick (x: laterale, y: avanti)
-    setMove(x, y) { this.walk.move = { x, y }; }
+    setMove(x, y) { this.walk.move = { x, y }; this._kick(); }
 
     _stepWalk() {
       const speed = 0.045;

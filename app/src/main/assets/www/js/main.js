@@ -978,7 +978,7 @@
       else if (e.key === 'Delete' || e.key === 'Backspace') editor.deleteSelection();
       else if (e.key === 'Escape') CM.onBack();
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); else if (view3d && tab === '3d') view3d.dirty = true; });
 
     const errs = CM.selfTest();
     if (errs.length) console.error('CASAMIA_SELFTEST_FAIL ' + errs.join('; '));

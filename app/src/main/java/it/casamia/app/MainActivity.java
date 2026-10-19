@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private static final int FILE_CHOOSER = 4201;
 
     private WebView web;
+    private boolean isResumed = false;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
     private ShopPanel shopPanel;
@@ -221,6 +222,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        isResumed = true;
+        if (web != null) { web.onResume(); web.evaluateJavascript("window.CasaMia && CasaMia.app && CasaMia.app.resumed && CasaMia.app.resumed()", null); }
         // Rientro dalle impostazioni dopo aver concesso il permesso di installare
         if (awaitingInstallPermission && getPackageManager().canRequestPackageInstalls()) {
             awaitingInstallPermission = false;
@@ -331,6 +334,9 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         web.evaluateJavascript("window.CasaMia && CasaMia.flush && CasaMia.flush()", null);
+        // In background l'app si ferma del tutto: niente timer né disegno
+        isResumed = false;
+        web.postDelayed(() -> { if (!isResumed && web != null) web.onPause(); }, 400);
     }
 
     /** Archivio chiave/valore su file nella memoria privata dell'app. */
