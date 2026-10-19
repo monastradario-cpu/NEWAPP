@@ -297,7 +297,7 @@
     const r = await U().dialog({ title: 'Assistente Gemini', body, actions: [{ label: 'Annulla', value: false }, { label: 'Prova', value: 'test' }, { label: 'Salva', value: true, primary: true }] });
     if (!r) return;
     CM.store.pref('geminiKey', v.key.trim());
-    CM.store.pref('geminiModel', v.model.trim() || 'gemini-2.5-flash');
+    CM.store.pref('geminiModel', v.model.trim() || 'gemini-3.8-flash');
     CM.store.pref('geminiImageModel', v.img.trim() || 'gemini-2.5-flash-image');
     if (r === 'test') {
       try { const t = await CM.ai.text('Rispondi solo con la parola: pronto'); U().toast('Gemini risponde: ' + t.trim().slice(0, 40)); }

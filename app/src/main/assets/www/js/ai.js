@@ -6,11 +6,43 @@
 
   const AI = CM.ai = {
     key() { return (CM.store && CM.store.pref('geminiKey')) || ''; },
-    textModel() { return (CM.store && CM.store.pref('geminiModel')) || 'gemini-2.5-flash'; },
+    textModel() { return (CM.store && CM.store.pref('geminiModel')) || 'gemini-3.8-flash'; },
     imageModel() { return (CM.store && CM.store.pref('geminiImageModel')) || 'gemini-2.5-flash-image'; },
     enabled() { return !!AI.key(); },
 
+    // Se Google ritira un modello, ne scelgo da solo uno nuovo e lo ricordo
+    async pickModel(oldModel, msg, wantImage) {
+      const m = /use\s+(?:models\/)?(gemini-[\w.-]+)/i.exec(msg || '');
+      if (m && !wantImage) return m[1];
+      try {
+        const r = await fetch(API.replace(/models\/$/, 'models') + '?pageSize=200&key=' + encodeURIComponent(AI.key()));
+        const d = await r.json();
+        const names = (d.models || [])
+          .filter(x => (x.supportedGenerationMethods || []).includes('generateContent'))
+          .map(x => String(x.name).replace(/^models\//, ''))
+          .filter(n => /^gemini-/.test(n) && /flash/.test(n) && !/(lite|tts|live|audio|embedding|thinking|exp)/.test(n) && (wantImage ? /image/.test(n) : !/image/.test(n)));
+        const ver = n => { const v = /gemini-(\d+(?:\.\d+)?)/.exec(n); return v ? parseFloat(v[1]) : 0; };
+        names.sort((a, b) => (ver(b) - ver(a)) || (/preview/.test(a) - /preview/.test(b)) || (a.length - b.length));
+        const pick = names.find(n => n !== oldModel);
+        if (pick) return pick;
+      } catch (e) {}
+      return m ? m[1] : null;
+    },
+
     async call(model, parts, opts) {
+      try { return await AI._call(model, parts, opts); } catch (e) {
+        const msg = String(e.message || '');
+        if (!/no longer available|not found|not supported|deprecated|update your code/i.test(msg)) throw e;
+        const wantImage = !!(opts && opts.image);
+        const nm = await AI.pickModel(model, msg, wantImage);
+        if (!nm || nm === model) throw e;
+        CM.store.pref(wantImage ? 'geminiImageModel' : 'geminiModel', nm);
+        if (CM.ui) CM.ui.toast('Gemini: passo al modello ' + nm);
+        return AI._call(nm, parts, opts);
+      }
+    },
+
+    async _call(model, parts, opts) {
       opts = opts || {};
       if (!AI.key()) throw new Error('NO_KEY');
       const body = { contents: (opts.history || []).concat([{ role: 'user', parts }]) };
