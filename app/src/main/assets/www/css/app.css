@@ -383,3 +383,49 @@ input, select { font: inherit; color: inherit; }
 /* Tastiera aperta (telefono): nascondo barra in basso e riepilogo, il pannello prende pi\u00f9 spazio */
 body.kb .tabbar, body.kb .summary { display: none; }
 body.kb .sheet { max-height: 78%; }
+
+/* Superfici per stanza nel riepilogo */
+.summary { gap: 6px; padding: 6px 12px; scrollbar-width: none; }
+.summary::-webkit-scrollbar { display: none; }
+.m2-chip { flex: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); border-radius: 99px; padding: 5px 10px; font: 500 12.5px var(--sans); min-height: 32px; display: inline-flex; align-items: center; gap: 4px; }
+.m2-chip b { font: 600 12.5px var(--mono); color: var(--ink); }
+.m2-chip.total { background: var(--ink); color: #fff; border-color: var(--ink); }
+.m2-chip.total b { color: #fff; }
+.m2-chip.on { border-color: var(--accent); color: var(--accent); }
+.m2-chip.plain { border: none; background: transparent; }
+.l-num { font: 600 14px var(--mono); color: var(--ink); flex: none; }
+
+/* Punto esclamativo degli errori */
+.prob-btn { position: absolute; left: 14px; top: 52px; z-index: 3; min-width: 44px; height: 44px; border-radius: 22px; border: none; background: #D23B2A; color: #fff; font: 700 18px var(--sans); display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 12px; box-shadow: 0 4px 12px rgba(210,59,42,0.35); }
+.prob-btn b { font: 600 13px var(--mono); background: rgba(255,255,255,0.25); border-radius: 10px; padding: 1px 6px; }
+.prob-btn.hidden { display: none; }
+.prob-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.prob { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--paper); }
+.prob-text { font-size: 14px; line-height: 1.4; }
+.prob-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.btn.small { min-height: 36px; padding: 0 14px; font-size: 14px; }
+
+/* (i) dei termini tecnici */
+.info-i { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-left: 6px; border-radius: 50%; border: 1.5px solid var(--accent); color: var(--accent); background: transparent; font: 700 12px/1 Georgia, serif; font-style: italic; vertical-align: middle; padding: 0; }
+
+/* Tipo stanza con un tocco */
+.type-chips { margin: 4px 0 8px; }
+
+/* Avvio progetto vuoto: tre grandi scelte */
+.start-card { position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%); z-index: 4; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 10px 30px rgba(27,30,34,0.10); }
+.start-card h3 { margin: 0 0 4px; font-size: 19px; }
+.start-card p { margin: 0 0 12px; color: var(--ink-2); font-size: 14px; }
+.start-card .big { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--paper); border-radius: 14px; padding: 14px; margin-top: 10px; min-height: 64px; color: var(--ink); }
+.start-card .big b { display: block; font-size: 16px; }
+.start-card .big small { color: var(--muted); font-size: 13px; }
+.start-card .big svg { flex: none; color: var(--accent); }
+@media (min-width: 900px) { .start-card { left: 50%; right: auto; width: 420px; transform: translate(-50%, -50%); } }
+
+/* Modalit\u00e0 semplice */
+.mode-btn { border: 1px solid var(--line-2); background: var(--surface); color: var(--ink-2); border-radius: 99px; height: 30px; padding: 0 9px; font: 600 11.5px var(--sans); flex: none; }
+.mode-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+body.simple .adv { display: none !important; }
+
+/* I messaggi brevi compaiono in alto, sotto l'intestazione: non coprono suggerimenti e pulsanti */
+.toast { bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 64px); transform: translate(-50%, -12px); }
+.toast.show { transform: translate(-50%, 0); }

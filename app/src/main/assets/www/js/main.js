@@ -84,7 +84,7 @@
     S.saveProject(p);
     openProject(p.id);
     if (withPlan) loadUnderlay();
-    else U.toast('Scegli “Stanza” e trascina per disegnare');
+    // (progetto vuoto: ci pensa la scheda \u201cCome vuoi iniziare?\u201d)
   }
 
   function openSample() {
@@ -114,11 +114,92 @@
     { id: 'erase', label: 'Cancella zona', icon: 'trash' }
   ];
 
+  /* ---------- Modalit\u00e0 semplice / completa ---------- */
+  function isSimple() { return !!S.pref('simpleMode'); }
+  function applyMode() {
+    const on = isSimple();
+    document.body.classList.toggle('simple', on);
+    const b = $('modeBtn');
+    if (b) { b.textContent = 'Semplice'; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+  }
+  function toggleMode() {
+    S.pref('simpleMode', !isSimple());
+    applyMode();
+    if (isSimple() && tab === 'lavori') setTab('pianta');
+    if (isSimple() && ['fixture', 'column', 'beam'].includes(editor.tool)) editor.setTool('select');
+    buildTools(); renderSheet(); if (tab !== 'pianta' && tab !== '3d') renderTab();
+    U.toast(isSimple() ? 'Modalit\u00e0 semplice: impianti, strutture, lavori e preventivi nascosti' : 'Modalit\u00e0 completa: tutte le funzioni');
+  }
+
+  /* ---------- Progetto vuoto: tre grandi scelte ---------- */
+  const IC = (d) => '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">' + d + '</svg>';
+  function updateStart() {
+    const card = $('startCard');
+    if (!card || !editor) return;
+    const p = editor.plan;
+    const empty = p && !Object.keys(p.walls).length && !Object.keys(p.rooms).length && !p.underlay && editor.tool === 'select';
+    card.classList.toggle('hidden', !empty);
+    $('hint').classList.toggle('hidden-soft', !!empty);
+    if (!empty || card.childNodes.length) return;
+    const big = (icon, title, sub, fn) => el('button', { class: 'big', onclick: fn, html: IC(icon) + '<span><b>' + title + '</b><small>' + sub + '</small></span>' });
+    card.appendChild(el('h3', { text: 'Come vuoi iniziare?' }));
+    card.appendChild(el('p', { text: 'Scegli un modo: potrai sempre aggiungere e correggere dopo.' }));
+    card.appendChild(big('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>', 'Carica la planimetria', 'Foto, immagine o PDF: riconosco i muri da solo', () => { card.classList.add('hidden'); loadUnderlay(); }));
+    card.appendChild(big('<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 12h8v8"/>', 'Disegna una stanza', 'Trascina il dito sulla griglia, poi correggi le misure', () => { editor.setTool('room'); buildTools(); card.classList.add('hidden'); U.toast('Trascina il dito in diagonale per disegnare la stanza'); }));
+    card.appendChild(big('<path d="M4 17l6-6 4 4 6-6"/><path d="M3 21h18"/><path d="M14 4h6v6"/>', 'Scrivi le misure', 'Larghezza \u00d7 lunghezza: le stanze si affiancano da sole', () => { card.classList.add('hidden'); roomByMeasures(); }));
+  }
+
+  // Stanza dalle misure: si attacca a destra (o sotto) della casa gi\u00e0 disegnata
+  async function roomByMeasures() {
+    const v = { w: '', l: '', type: 'soggiorno', where: 'destra' };
+    const plan = editor.plan;
+    const hasRooms = Object.keys(plan.rooms).length > 0;
+    const wIn = el('input', { type: 'text', inputmode: 'decimal', class: 'num', placeholder: 'es. 4,20', 'aria-label': 'Larghezza' });
+    const lIn = el('input', { type: 'text', inputmode: 'decimal', class: 'num', placeholder: 'es. 3,50', 'aria-label': 'Lunghezza' });
+    const types = ['soggiorno', 'cucina', 'camera', 'cameretta', 'bagno', 'corridoio', 'ingresso', 'studio', 'ripostiglio', 'lavanderia', 'balcone', 'altro'];
+    const chips = el('div', { class: 'chips-row wrap' });
+    const drawChips = () => { chips.innerHTML = ''; types.forEach(k => chips.appendChild(el('button', { class: 'chip small' + (v.type === k ? ' active' : ''), text: CM.roomType(k).label, onclick: () => { v.type = k; drawChips(); } }))); };
+    drawChips();
+    const body = el('div', {}, [
+      chips,
+      el('div', { class: 'fields', style: 'margin-top:10px' }, [
+        el('div', { class: 'field' }, [el('label', { text: 'Larghezza' }), el('div', { class: 'input-unit' }, [wIn, el('span', { text: 'm' })])]),
+        el('div', { class: 'field' }, [el('label', { text: 'Lunghezza' }), el('div', { class: 'input-unit' }, [lIn, el('span', { text: 'm' })])]),
+        hasRooms ? U.segField('Dove la metto', [{ value: 'destra', label: 'A destra' }, { value: 'sotto', label: 'Sotto' }, { value: 'sinistra', label: 'A sinistra' }, { value: 'sopra', label: 'Sopra' }], v.where, x => { v.where = x; body.querySelectorAll('.seg button').forEach(b => { const on = b.textContent.toLowerCase().includes(x); b.classList.toggle('on', on); }); }) : null
+      ])
+    ]);
+    const r = await U.dialog({ title: hasRooms ? 'Aggiungi una stanza' : 'Prima stanza', text: 'Scegli il tipo e scrivi le misure interne.', body, actions: [{ label: 'Annulla', value: null }, { label: 'Aggiungi', value: 'ok', primary: true }] });
+    if (r !== 'ok') { updateStart(); return; }
+    const W = CM.fmt.parseM(wIn.value, 'm'), L = CM.fmt.parseM(lIn.value, 'm');
+    if (!(W > 0.3) || !(L > 0.3)) { U.toast('Scrivi larghezza e lunghezza (es. 4,20)'); return roomByMeasures(); }
+    const s = project.settings;
+    const b = hasRooms ? P.bounds(Object.assign({}, plan, { underlay: null, furniture: {}, fixtures: {} })) : null;
+    // le misure scritte sono interne: il disegno usa l'asse dei muri, quindi aggiungo lo spessore
+    const t = s.wallT || 0.1, AW = W + t, AL = L + t;
+    let x0 = 0, y0 = 0;
+    if (b) {
+      if (v.where === 'destra') { x0 = b.maxX; y0 = b.minY; }
+      else if (v.where === 'sinistra') { x0 = b.minX - AW; y0 = b.minY; }
+      else if (v.where === 'sotto') { x0 = b.minX; y0 = b.maxY; }
+      else { x0 = b.minX; y0 = b.minY - AL; }
+    }
+    let rid;
+    editor.mutate(pl => { rid = P.addRectRoom(pl, x0, y0, x0 + AW, y0 + AL, { type: v.type, h: s.wallH, wall: { t: s.wallT, h: s.wallH, state: s.newState } }); }, 'room');
+    editor.setTool('select'); buildTools();
+    editor.fit();
+    editor.select({ type: 'room', id: rid });
+    const again = await U.dialog({ title: CM.roomType(v.type).label + ' aggiunta', text: CM.fmt.m(W) + ' \u00d7 ' + CM.fmt.m(L) + ' = ' + CM.fmt.area(W * L) + '. Vuoi aggiungerne un\u2019altra?', actions: [{ label: 'Basta cos\u00ec', value: false }, { label: 'Un\u2019altra stanza', value: true, primary: true }] });
+    if (again) roomByMeasures();
+  }
+
   function buildTools() {
+    updateStart();
     const bar = $('tools');
     bar.innerHTML = '';
     const activeTool = sheetMode === 'underlay' ? 'underlay' : editor.tool;
+    const SIMPLE_HIDE = ['fixture', 'column', 'beam'];
     for (const t of TOOLS) {
+      if (isSimple() && SIMPLE_HIDE.includes(t.id)) continue;
       const on = activeTool === t.id || (t.id === 'underlay' && ['calibrate', 'moveUnderlay', 'calibPick'].includes(editor.tool));
       bar.appendChild(el('button', {
         class: 'chip' + (on ? ' active' : ''), 'data-tool': t.id, 'aria-pressed': on ? 'true' : 'false',
@@ -222,13 +303,11 @@
   }
 
   function allWarnings() {
-    const plan = editor.plan;
-    const list = CM.norms.check(plan).map(n => ({ text: n.text, sel: { type: 'room', id: n.room } }));
-    for (const fid in editor.warnings) for (const w of editor.warnings[fid]) list.push({ text: plan.furniture[fid].name + ': ' + w, sel: { type: 'furniture', id: fid } });
-    return list;
+    try { return CM.problems(editor.plan, editor.warnings); } catch (e) { console.error(e); return []; }
   }
 
   function updateSummary() {
+    updateStart();
     const plan = editor.plan;
     const t = P.totals(plan);
     let dem = 0, nuovo = 0;
@@ -240,22 +319,71 @@
     const box = $('summary');
     box.innerHTML = '';
     const warns = allWarnings();
-    if (warns.length) box.appendChild(el('button', { class: 'warn-chip', text: '⚠︎ ' + warns.length + (warns.length === 1 ? ' avviso' : ' avvisi'), onclick: warningsDialog }));
-    const parts = ['Netta <b>' + CM.fmt.area(t.net) + '</b>', 'Lorda <b>' + CM.fmt.area(t.gross) + '</b>', '<b>' + t.rooms + '</b> ' + (t.rooms === 1 ? 'ambiente' : 'ambienti')];
-    if (t.outdoor > 0) parts.push('Esterni <b>' + CM.fmt.area(t.outdoor) + '</b>');
-    if (dem > 0) parts.push('<span class="dot demolire"></span> <b>' + CM.fmt.m(dem) + '</b>');
-    if (nuovo > 0) parts.push('<span class="dot nuovo"></span> <b>' + CM.fmt.m(nuovo) + '</b>');
-    try { const c = CM.costs.compute(project); if (c.total > 0) parts.push('Stima <b>' + CM.fmt.eur(c.total) + '</b>'); } catch (e) { console.error(e); }
-    box.appendChild(el('span', { html: parts.join(' · ') }));
+    const pb = $('probBtn');
+    if (pb) { pb.classList.toggle('hidden', !warns.length); pb.querySelector('b').textContent = warns.length; }
+    // superficie di ogni stanza, sempre in vista
+    const rooms = Object.keys(plan.rooms).map(id => ({ id, r: plan.rooms[id], st: P.roomStats(plan, plan.rooms[id]) }));
+    box.appendChild(el('button', { class: 'm2-chip total', onclick: areasDialog, html: 'Casa <b>' + CM.fmt.area(t.net) + '</b>' }));
+    for (const x of rooms) box.appendChild(el('button', { class: 'm2-chip' + (editor.sel.type === 'room' && editor.sel.id === x.id ? ' on' : ''), onclick: () => focusSel({ type: 'room', id: x.id }), html: x.r.name + ' <b>' + CM.fmt.area(x.st.net) + '</b>' }));
+    if (dem > 0) box.appendChild(el('span', { class: 'm2-chip plain', html: '<span class="dot demolire"></span> ' + CM.fmt.m(dem) }));
+    if (nuovo > 0) box.appendChild(el('span', { class: 'm2-chip plain', html: '<span class="dot nuovo"></span> ' + CM.fmt.m(nuovo) }));
   }
 
+  // Tabella delle superfici: stanza per stanza e totali
+  function areasDialog() {
+    const plan = editor.plan, t = P.totals(plan);
+    const rows = Object.keys(plan.rooms).map(id => { const r = plan.rooms[id], st = P.roomStats(plan, r); return { r, st, out: !!CM.roomType(r.type).outdoor }; })
+      .sort((a, b) => (a.out - b.out) || (b.st.net - a.st.net));
+    const tbl = el('div', { class: 'card' }, rows.map(x => el('div', { class: 'line' }, [el('span', { class: 'l-main', text: x.r.name + (x.out ? ' (esterno)' : '') }), el('span', { class: 'l-num', text: CM.fmt.area(x.st.net) })])));
+    const tot = el('div', { class: 'stats' }, [
+      U.stat('Calpestabile', CM.fmt.area(t.net)), U.stat('Lorda (con i muri)', CM.fmt.area(t.gross)),
+      t.outdoor > 0 ? U.stat('Esterni', CM.fmt.area(t.outdoor)) : null, U.stat('Stanze', String(t.rooms))
+    ].filter(Boolean));
+    U.dialog({ title: 'Metri quadri della casa', body: el('div', {}, [tbl, tot]), actions: [{ label: 'Chiudi', value: true, primary: true }] });
+  }
+
+  // Centro errori: ogni problema con \u201cVai\u201d (lo sistemi tu) e \u201cCorreggi\u201d (lo sistema l'app)
   function warningsDialog() {
     const list = allWarnings();
-    const body = el('div', {}, [
-      el('div', { class: 'card' }, list.map(w => el('button', { class: 'line btnline', onclick: () => { U.closeOverlay(); focusSel(w.sel); } }, [el('span', { class: 'l-main', text: w.text })]))),
-      el('p', { class: 'muted small', text: CM.norms.NOTE })
-    ]);
-    U.dialog({ title: 'Avvisi', body, actions: [{ label: 'Chiudi', value: true, primary: true }] });
+    if (!list.length) { U.toast('Nessun errore: tutto a posto'); return; }
+    const fixable = list.filter(w => w.fix).length;
+    const rows = list.map(w => el('div', { class: 'prob' }, [
+      el('div', { class: 'prob-text', text: w.text }),
+      el('div', { class: 'prob-acts' }, [
+        (w.sel && w.sel.type) || w.at ? el('button', { class: 'btn small', text: 'Vai', onclick: () => { U.closeOverlay(); goProblem(w); } }) : null,
+        w.fix ? el('button', { class: 'btn small primary', text: w.fixLabel || 'Correggi', onclick: () => { U.closeOverlay(); fixProblem(w); } }) : null
+      ])
+    ]));
+    const body = el('div', {}, [el('div', { class: 'prob-list' }, rows), el('p', { class: 'muted small', text: CM.norms.NOTE })]);
+    const actions = [{ label: 'Chiudi', value: false }];
+    if (fixable > 1) actions.push({ label: 'Correggi tutto (' + fixable + ')', value: 'all', primary: true });
+    U.dialog({ title: list.length + (list.length === 1 ? ' errore' : ' errori'), body, actions }).then(r => { if (r === 'all') fixAll(); });
+  }
+  function goProblem(w) {
+    if (w.sel && w.sel.type) return focusSel(w.sel);
+    setTab('pianta'); editor.setTool('select'); buildTools();
+    if (w.at) editor.revealSegment({ a: w.at, b: w.at }, { x: 0, y: 0, w: $('stage').clientWidth, h: $('stage').clientHeight });
+  }
+  function fixProblem(w) {
+    let ok = false;
+    editor.mutate(pl => { ok = w.fix(pl); }, 'fix');
+    U.toast(ok ? 'Corretto \u00b7 puoi annullare' : 'Non riesco a correggerlo da solo: toccalo e sistemalo tu');
+    if (!ok && w.sel && w.sel.type) focusSel(w.sel);
+    updateSummary();
+  }
+  function fixAll() {
+    let n = 0;
+    editor.mutate(pl => {
+      const tried = new Set();
+      for (let k = 0; k < 60; k++) {
+        const w = CM.problems(pl).find(x => x.fix && !tried.has(x.text));
+        if (!w) break;
+        tried.add(w.text);
+        if (w.fix(pl)) n++;
+      }
+    }, 'fix');
+    U.toast(n ? n + ' errori corretti \u00b7 puoi annullare' : 'Nessuno corretto automaticamente');
+    updateSummary();
   }
 
   function focusSel(sel) {
@@ -311,6 +439,12 @@
       const st = P.roomStats(plan, room);
       const rect = P.rectInfo(plan, room);
       sheet.appendChild(sheetHead('Stanza', room.name));
+      // tipo con un tocco
+      const quick = ['soggiorno', 'cucina', 'camera', 'cameretta', 'bagno', 'corridoio', 'ingresso', 'studio', 'ripostiglio', 'lavanderia', 'balcone', 'altro'];
+      sheet.appendChild(el('div', { class: 'chips-row wrap type-chips' }, quick.map(k => el('button', {
+        class: 'chip small' + (room.type === k ? ' active' : ''), text: CM.roomType(k).label,
+        onclick: () => mut(pl => { const r = pl.rooms[sel.id]; const auto = r.name === CM.roomType(r.type).label || /^Stanza \d+$/.test(r.name); r.type = k; if (auto) r.name = CM.roomType(k).label; }, 'type')
+      }))));
       const fields = el('div', { class: 'fields' });
       fields.appendChild(U.textField('Nome', room.name, v => mut(pl => { pl.rooms[sel.id].name = v; }, 'rename'), { full: false }));
       fields.appendChild(U.selectField('Tipo di ambiente', CM.ROOM_TYPES.map(t => ({ value: t.id, label: t.label })), room.type, v => mut(pl => {
@@ -969,6 +1103,7 @@
         if (actions.includes('undoPoint')) box.appendChild(el('button', { text: 'Annulla punto', onclick: () => editor.undoPoint() }));
         if (actions.includes('finish')) box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => editor.finishChain() }));
         if (editor.tool === 'fixture') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
+        if (editor.tool === 'room') box.appendChild(el('button', { class: 'primary', text: 'Con le misure', onclick: () => roomByMeasures() }));
         if (editor.tool === 'erase') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
         if (editor.tool === 'cropUnderlay') box.appendChild(el('button', { text: 'Salta', onclick: () => { editor.setTool('select'); buildTools(); autoCalibrate(); } }));
         if (editor.tool === 'calibPick') {
@@ -1022,6 +1157,9 @@
     $('undoBtn').addEventListener('click', () => editor.undo());
     $('redoBtn').addEventListener('click', () => editor.redo());
     $('moreBtn').addEventListener('click', moreMenu);
+    $('modeBtn').addEventListener('click', toggleMode);
+    $('probBtn').addEventListener('click', warningsDialog);
+    applyMode();
     $('compass').addEventListener('click', compassDialog);
     $('zoomIn').addEventListener('click', () => editor.zoomBy(1.4));
     $('zoomOut').addEventListener('click', () => editor.zoomBy(1 / 1.4));

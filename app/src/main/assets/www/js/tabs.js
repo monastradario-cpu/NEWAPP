@@ -324,6 +324,8 @@
         ]);
       })));
     }
+    const simple = !!(CM.store && CM.store.pref('simpleMode'));
+    if (!simple) {
     // preventivi
     box.appendChild(section('Preventivi delle ditte', el('button', { class: 'btn small', text: 'Aggiungi', onclick: () => T.editQuote(null) })));
     const quotes = project.quotes || [];
@@ -339,8 +341,9 @@
         el('button', { class: 'icon-btn ghost', 'aria-label': 'Modifica preventivo', html: U().icon('rename', 18), onclick: () => T.editQuote(q) })
       ])))));
     }
+    }
     // varianti
-    if (project.variants.length > 1) {
+    if (!simple && project.variants.length > 1) {
       box.appendChild(section('Confronto varianti'));
       const rows = project.variants.map(v => ({ v, c: CM.costs.compute(project, v.plan), t: P.totals(v.plan) }));
       box.appendChild(card(rows.map(r => el('button', { class: 'line btnline' + (r.v.id === project.active ? ' current' : ''), onclick: () => app().setVariant(r.v.id) }, [

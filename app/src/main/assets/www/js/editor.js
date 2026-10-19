@@ -773,7 +773,7 @@
     }
 
     _nearestWall(world, maxPx) {
-      let best = null, bestD = (maxPx || 26) / this.view.s;
+      let best = null, bestD = (maxPx || 48) / this.view.s;
       for (const id in this.plan.walls) {
         const w = this.plan.walls[id];
         const pr = G.projSeg(world, this.plan.nodes[w.a], this.plan.nodes[w.b]);

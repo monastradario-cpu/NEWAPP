@@ -141,6 +141,14 @@
   }
 
   /* ---------- Campi del pannello proprietà ---------- */
+  /* Etichetta del campo con la (i): spiegazione dei termini tecnici */
+  function fieldLabel(tag, label) {
+    const g = CM.GLOSSARY && (CM.GLOSSARY[label] || CM.GLOSSARY[String(label).replace(/\s*\(.*\)$/, '')]);
+    const lb = el(tag, { class: tag === 'span' ? 'lbl' : '' }, [document.createTextNode(label)]);
+    if (g) lb.appendChild(el('button', { class: 'info-i', type: 'button', 'aria-label': 'Cosa significa ' + label, text: 'i', onclick: (e) => { e.preventDefault(); e.stopPropagation(); dialog({ title: label, text: g }); } }));
+    return lb;
+  }
+
   function numField(label, meters, unit, onCommit, opts) {
     opts = opts || {};
     const toDisplay = (m) => unit === 'cm' ? String(Math.round(m * 100)) : CM.fmt.num(m, 2);
@@ -160,7 +168,7 @@
     input.addEventListener('change', commit);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); } });
     input.addEventListener('focus', () => setTimeout(() => input.select(), 0));
-    return el('div', { class: 'field' + (opts.full ? ' full' : '') }, [el('label', { text: label }), el('div', { class: 'input-unit' }, [input, el('span', { text: unit })])]);
+    return el('div', { class: 'field' + (opts.full ? ' full' : '') }, [fieldLabel('label', label), el('div', { class: 'input-unit' }, [input, el('span', { text: unit })])]);
   }
 
   function textField(label, value, onCommit, opts) {
@@ -168,20 +176,20 @@
     const input = el('input', { type: 'text', value, 'aria-label': label, enterkeyhint: 'done' });
     input.addEventListener('change', () => { const v = input.value.trim(); if (v) onCommit(v); else input.value = value; });
     input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
-    return el('div', { class: 'field' + (opts.full === false ? '' : ' full') }, [el('label', { text: label }), input]);
+    return el('div', { class: 'field' + (opts.full === false ? '' : ' full') }, [fieldLabel('label', label), input]);
   }
 
   function selectField(label, options, value, onChange, opts) {
     opts = opts || {};
     const sel = el('select', { 'aria-label': label }, options.map(o => el('option', { value: o.value, selected: o.value === value }, o.label)));
     sel.addEventListener('change', () => onChange(sel.value));
-    return el('div', { class: 'field' + (opts.full === false ? '' : ' full') }, [el('label', { text: label }), sel]);
+    return el('div', { class: 'field' + (opts.full === false ? '' : ' full') }, [fieldLabel('label', label), sel]);
   }
 
   function segField(label, options, value, onChange) {
     const seg = el('div', { class: 'seg', role: 'radiogroup', 'aria-label': label }, options.map(o =>
       el('button', { class: o.value === value ? 'on' : '', role: 'radio', 'aria-checked': o.value === value ? 'true' : 'false', onclick: () => onChange(o.value), html: (o.dot ? '<span class="dot ' + o.dot + '"></span>' : '') + o.label })));
-    return el('div', { class: 'field full' }, [el('span', { class: 'lbl', text: label }), seg]);
+    return el('div', { class: 'field full' }, [fieldLabel('span', label), seg]);
   }
 
   function stat(k, v) { return el('div', { class: 'stat' }, [el('div', { class: 'k', text: k }), el('div', { class: 'v', text: v })]); }

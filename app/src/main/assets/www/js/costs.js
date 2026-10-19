@@ -236,6 +236,8 @@
   const ACCESSORI = ['bagno', 'corridoio', 'ingresso', 'ripostiglio', 'lavanderia'];
   N.check = function (plan) {
     const out = [];
+    // le finestre si controllano solo quando hai iniziato a metterle (niente avvisi mentre disegni le stanze)
+    const anyOpening = Object.keys(plan.openings || {}).length > 0;
     for (const id in plan.rooms) {
       const r = plan.rooms[id];
       if (r.type === 'balcone' || r.type === 'altro') continue;
@@ -253,8 +255,8 @@
         const op = plan.openings[oid];
         if (walls.includes(op.wall) && (op.kind === 'finestra' || op.kind === 'portafinestra')) win += op.w * op.h;
       }
-      if (ABITABILI.includes(r.type) && win < st.net / 8 - 1e-6) push(r.name + ': finestre ' + CM.fmt.area(win) + ', sotto 1/8 del pavimento (' + CM.fmt.area(st.net / 8) + ').');
-      if (r.type === 'bagno' && win === 0) push(r.name + ': senza finestra serve un’aerazione forzata.');
+      if (anyOpening && ABITABILI.includes(r.type) && win < st.net / 8 - 1e-6) push(r.name + ': finestre ' + CM.fmt.area(win) + ', sotto 1/8 del pavimento (' + CM.fmt.area(st.net / 8) + ').');
+      if (anyOpening && r.type === 'bagno' && win === 0) push(r.name + ': senza finestra serve un’aerazione forzata.');
     }
     return out;
   };
