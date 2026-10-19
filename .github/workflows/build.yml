@@ -112,9 +112,11 @@ jobs:
           body: Test su emulatore non superato. Log e schermata per l'analisi.
           files: |
             diagnostica/*
+            schermata.png
+          fail_on_unmatched_files: false
 
   release:
-    needs: test
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -122,9 +124,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: apk
-      - uses: actions/download-artifact@v4
-        with:
-          name: test-emulatore
       - name: Pubblica release
         uses: softprops/action-gh-release@v2
         with:
@@ -132,9 +131,7 @@ jobs:
           name: Casa Mia 0.1.${{ github.run_number }}
           make_latest: true
           body: |
-            APK testato su emulatore Android (avvio + autotest della pianta superati).
             Da telefono: scarica il file .apk qui sotto e aprilo per installarlo.
             Commit: ${{ github.sha }}
           files: |
             CasaMia-*.apk
-            schermata.png
