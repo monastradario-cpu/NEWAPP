@@ -65,6 +65,26 @@ with sync_playwright() as p:
     check(page.locator('.project-card').count() == 1, 'esempio presente in home')
     page.screenshot(path=f'{OUT}/02-home.png')
 
+    # Pulsante Aggiorna (risposta di GitHub simulata)
+    import json as _json
+    def fake_release(tag):
+        body = _json.dumps({'tag_name': tag, 'html_url': 'https://github.com/x', 'assets': [{'name': 'CasaMia.apk', 'size': 520000, 'browser_download_url': 'https://github.com/monastradario-cpu/NEWAPP/releases/download/x/CasaMia.apk'}]})
+        page.unroute('https://api.github.com/**')
+        page.route('https://api.github.com/**', lambda r: r.fulfill(status=200, content_type='application/json', body=body))
+    fake_release('v9.9.9')
+    page.locator('#updateBtn').click()
+    page.wait_for_timeout(400)
+    check(page.get_by_text('È disponibile la versione 9.9.9').is_visible(), 'Aggiorna: propone la nuova versione')
+    check(page.locator('#updateBadge').is_visible(), 'Aggiorna: pallino di avviso')
+    page.screenshot(path=f'{OUT}/02b-aggiorna.png')
+    page.get_by_role('button', name='Più tardi').click()
+    fake_release('v0.0.0')
+    page.evaluate("document.getElementById('updateBadge').classList.add('hidden')")
+    page.locator('#updateBtn').click()  # con aggiornamento in sospeso riapre la proposta
+    page.wait_for_timeout(300)
+    if page.get_by_role('button', name='Più tardi').is_visible():
+        page.get_by_role('button', name='Più tardi').click()
+
     # Esempio
     page.locator('.project-card').first.click()
     page.wait_for_timeout(300)

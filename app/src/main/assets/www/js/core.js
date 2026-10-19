@@ -35,6 +35,17 @@
     }
   };
 
+  // true se la versione a (es. "0.1.12") è più recente di b
+  CM.versionNewer = function (a, b) {
+    const pa = String(a || '').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    const pb = String(b || '').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i] || 0, y = pb[i] || 0;
+      if (x !== y) return x > y;
+    }
+    return false;
+  };
+
   /* ---------- Geometria ---------- */
   const G = CM.geom = {
     dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); },
@@ -554,6 +565,7 @@
     near(fmt.parseM('3,8'), 3.8, 1e-9, 'parse 3,8');
     near(fmt.parseM('380cm'), 3.8, 1e-9, 'parse 380cm');
     near(fmt.parseM('80', 'cm'), 0.8, 1e-9, 'parse 80 cm');
+    if (!CM.versionNewer('0.1.10', '0.1.9') || CM.versionNewer('0.1.2', '0.1.2') || CM.versionNewer('v0.1.1', '0.1.2')) errors.push('confronto versioni');
     return errors;
   };
 

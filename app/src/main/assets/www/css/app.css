@@ -48,6 +48,16 @@ input, select { font: inherit; color: inherit; }
 .icon-btn:active { background: var(--soft); }
 
 /* ---------- Home ---------- */
+.head-actions { display: flex; align-items: center; gap: 8px; }
+.update-btn {
+  position: relative; min-height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface);
+  display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 14px;
+}
+.update-btn:active { background: var(--soft); }
+.update-btn.available { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.update-btn.busy svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.badge { position: absolute; top: -4px; right: -4px; width: 12px; height: 12px; border-radius: 99px; background: var(--new); border: 2px solid var(--paper); }
 #home { overflow-y: auto; }
 .home-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 4px 20px; }
 .brand { display: flex; align-items: center; gap: 8px; color: var(--accent); }

@@ -414,6 +414,85 @@
     if (!S.saveProject(project)) U.toast('Salvataggio non riuscito: memoria piena?');
   }
 
+  /* ---------- Aggiornamento dell'app ---------- */
+  const RELEASES_API = 'https://api.github.com/repos/monastradario-cpu/NEWAPP/releases/latest';
+  let updateInfo = null;
+  let checking = false;
+
+  function currentVersion() {
+    return S.isNative && window.CasaMiaAndroid.version ? window.CasaMiaAndroid.version() : '0.0.0';
+  }
+
+  function setUpdateUi(state) {
+    const b = $('updateBtn');
+    b.classList.toggle('busy', state === 'busy');
+    b.classList.toggle('available', !!updateInfo);
+    $('updateBadge').classList.toggle('hidden', !updateInfo);
+    b.querySelector('span').textContent = updateInfo ? 'Aggiorna a ' + updateInfo.ver : 'Aggiorna';
+  }
+
+  async function checkUpdate(manual) {
+    if (checking) return;
+    checking = true;
+    if (manual) setUpdateUi('busy');
+    try {
+      const r = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const rel = await r.json();
+      const ver = String(rel.tag_name || '').replace(/^v/, '');
+      const apk = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
+      const cur = currentVersion();
+      if (apk && CM.versionNewer(ver, cur)) {
+        updateInfo = { ver, url: apk.browser_download_url, page: rel.html_url, size: apk.size };
+      } else {
+        updateInfo = null;
+      }
+      setUpdateUi();
+      if (manual) {
+        if (updateInfo) offerUpdate();
+        else U.toast('Hai gi\u00e0 l\u2019ultima versione (' + cur + ')');
+      }
+    } catch (e) {
+      setUpdateUi();
+      if (manual) U.toast('Non riesco a controllare: sei connesso a internet?');
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function offerUpdate() {
+    const u = updateInfo;
+    if (!u) return;
+    const mb = u.size ? ' (' + CM.fmt.num(u.size / 1048576, 1) + ' MB)' : '';
+    const ok = await U.dialog({
+      title: '\u00c8 disponibile la versione ' + u.ver,
+      text: 'Stai usando la ' + currentVersion() + '. Scarico l\u2019aggiornamento' + mb + ' e poi Android ti chiede di confermare l\u2019installazione. I tuoi progetti restano salvati.',
+      actions: [{ label: 'Pi\u00f9 tardi', value: false }, { label: 'Aggiorna ora', value: true, primary: true }]
+    });
+    if (!ok) return;
+    saveNow();
+    if (S.isNative && window.CasaMiaAndroid.update) {
+      window.CasaMiaAndroid.update(u.url, u.ver);
+      setUpdateUi('busy');
+    } else {
+      window.open(u.page, '_blank');
+    }
+  }
+
+  CM.onUpdateStatus = function (status) {
+    if (status === 'download') U.toast('Download dell\u2019aggiornamento in corso\u2026');
+    if (status === 'scaricato') { setUpdateUi(); U.toast('Download completato: conferma l\u2019installazione'); }
+    if (status === 'errore') { setUpdateUi(); U.toast('Aggiornamento non riuscito, riprova tra poco'); }
+    if (status === 'permesso') {
+      setUpdateUi();
+      U.dialog({
+        title: 'Un ultimo permesso',
+        text: 'Android chiede di consentire a Casa Mia di installare aggiornamenti. Attiva \u201cConsenti da questa fonte\u201d e torna indietro: l\u2019installazione riparte da sola. Serve solo la prima volta.',
+        actions: [{ label: 'Ho capito', value: true, primary: true }]
+      });
+    }
+  };
+
   /* ---------- Indietro ---------- */
   CM.onBack = function () {
     if (U.overlayOpen()) { U.closeOverlay(); return true; }
@@ -458,6 +537,7 @@
       if (c === 'help') U.tutorial();
       if (c === 'sample') { const p = CM.sample.create(); S.saveProject(p); renderHome(); U.toast('Esempio aggiunto'); }
     });
+    $('updateBtn').addEventListener('click', () => (updateInfo ? offerUpdate() : checkUpdate(true)));
     $('backHome').addEventListener('click', goHome);
     $('projectTitle').addEventListener('click', renameProject);
     $('undoBtn').addEventListener('click', () => editor.undo());
@@ -501,6 +581,7 @@
     show('home');
     if (first) setTimeout(() => U.tutorial(() => S.pref('guidaVista', true)), 300);
     console.log('CASAMIA_READY ' + (S.isNative ? 'android' : 'browser'));
+    if (S.isNative) setTimeout(() => checkUpdate(false), 2500);
     setTimeout(() => {
       const r = $('home').getBoundingClientRect();
       console.log('CASAMIA_LAYOUT ' + JSON.stringify({
