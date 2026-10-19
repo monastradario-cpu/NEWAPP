@@ -1,0 +1,561 @@
+/* Casa Mia — nucleo: utilità, geometria, modello della pianta, progetto.
+   Funziona sia nel browser (window.CM) sia in Node (per i test). */
+(function (root) {
+  'use strict';
+  const CM = root.CM || (root.CM = {});
+  root.CasaMia = CM; // nome usato dal guscio Android (tasto indietro, salvataggio)
+
+  /* ---------- Utilità ---------- */
+  let idCounter = 0;
+  CM.uid = function (prefix) {
+    idCounter = (idCounter + 1) % 1679616;
+    return (prefix || '') + Date.now().toString(36) + idCounter.toString(36) + Math.random().toString(36).slice(2, 6);
+  };
+  const r3 = (v) => Math.round(v * 1000) / 1000; // precisione al millimetro
+  CM.r3 = r3;
+  CM.clone = (o) => JSON.parse(JSON.stringify(o));
+
+  const fmt = CM.fmt = {
+    num(v, dec) {
+      if (!isFinite(v)) return '–';
+      return v.toFixed(dec).replace('.', ',');
+    },
+    m(v) { return fmt.num(v, 2) + ' m'; },
+    cm(v) { return Math.round(v * 100) + ' cm'; },
+    area(v) { return fmt.num(v, 1) + ' m²'; },
+    // "3,8" "3.80" "380cm" → metri
+    parseM(str, unit) {
+      if (str == null) return NaN;
+      let s = String(str).trim().toLowerCase().replace(/\s+/g, '').replace(',', '.');
+      let u = unit || 'm';
+      if (s.endsWith('cm')) { u = 'cm'; s = s.slice(0, -2); } else if (s.endsWith('m')) { u = 'm'; s = s.slice(0, -1); }
+      const v = parseFloat(s);
+      if (!isFinite(v)) return NaN;
+      return u === 'cm' ? v / 100 : v;
+    }
+  };
+
+  /* ---------- Geometria ---------- */
+  const G = CM.geom = {
+    dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); },
+    projSeg(p, a, b) {
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const L2 = dx * dx + dy * dy;
+      const t = L2 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2 : 0;
+      const tc = Math.max(0, Math.min(1, t));
+      const q = { x: a.x + dx * tc, y: a.y + dy * tc };
+      return { t, tc, q, d: Math.hypot(p.x - q.x, p.y - q.y), L: Math.sqrt(L2) };
+    },
+    signedArea(pts) {
+      let s = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        s += a.x * b.y - b.x * a.y;
+      }
+      return s / 2;
+    },
+    centroid(pts) {
+      const A = G.signedArea(pts);
+      if (Math.abs(A) < 1e-9) {
+        const c = pts.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
+        return { x: c.x / pts.length, y: c.y / pts.length };
+      }
+      let cx = 0, cy = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        const f = a.x * b.y - b.x * a.y;
+        cx += (a.x + b.x) * f; cy += (a.y + b.y) * f;
+      }
+      return { x: cx / (6 * A), y: cy / (6 * A) };
+    },
+    inPoly(p, pts) {
+      let inside = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i], b = pts[j];
+        if (((a.y > p.y) !== (b.y > p.y)) && (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)) inside = !inside;
+      }
+      return inside;
+    },
+    snap(v, step) { return Math.round(v / step) * step; },
+    // Punto interno "buono" per l'etichetta (centroide se interno, altrimenti un punto interno)
+    labelPoint(pts) {
+      const c = G.centroid(pts);
+      if (G.inPoly(c, pts)) return c;
+      let best = pts[0], bestD = -1;
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      for (let i = 1; i < 12; i++) for (let j = 1; j < 12; j++) {
+        const p = { x: minX + (maxX - minX) * i / 12, y: minY + (maxY - minY) * j / 12 };
+        if (!G.inPoly(p, pts)) continue;
+        let d = Infinity;
+        for (let k = 0; k < pts.length; k++) d = Math.min(d, G.projSeg(p, pts[k], pts[(k + 1) % pts.length]).d);
+        if (d > bestD) { bestD = d; best = p; }
+      }
+      return best;
+    }
+  };
+
+  /* ---------- Cataloghi ---------- */
+  CM.ROOM_TYPES = [
+    { id: 'soggiorno', label: 'Soggiorno', fill: '#F3EEE4' },
+    { id: 'cucina', label: 'Cucina', fill: '#EDF1E8' },
+    { id: 'camera', label: 'Camera da letto', fill: '#ECEFF6' },
+    { id: 'cameretta', label: 'Cameretta', fill: '#EEEDF6' },
+    { id: 'bagno', label: 'Bagno', fill: '#E7F0F2' },
+    { id: 'corridoio', label: 'Corridoio', fill: '#F3F2EE' },
+    { id: 'ingresso', label: 'Ingresso', fill: '#F3F2EE' },
+    { id: 'studio', label: 'Studio', fill: '#F1EDF3' },
+    { id: 'ripostiglio', label: 'Ripostiglio', fill: '#F0EFEA' },
+    { id: 'lavanderia', label: 'Lavanderia', fill: '#E7F0F2' },
+    { id: 'balcone', label: 'Balcone / terrazzo', fill: '#EBF1E6' },
+    { id: 'altro', label: 'Altro', fill: '#F3F2EE' }
+  ];
+  CM.roomType = (id) => CM.ROOM_TYPES.find(t => t.id === id) || CM.ROOM_TYPES[CM.ROOM_TYPES.length - 1];
+
+  CM.OPENINGS = {
+    battente: { label: 'Porta a battente', w: 0.8, h: 2.1, sill: 0, door: true },
+    scorrevole: { label: 'Porta scorrevole esterno muro', w: 0.8, h: 2.1, sill: 0, door: true },
+    scomparsa: { label: 'Porta a scomparsa', w: 0.8, h: 2.1, sill: 0, door: true },
+    finestra: { label: 'Finestra', w: 1.2, h: 1.4, sill: 0.9 },
+    portafinestra: { label: 'Portafinestra', w: 1.2, h: 2.3, sill: 0 },
+    arco: { label: 'Arco / passaggio', w: 1.0, h: 2.2, sill: 0 }
+  };
+
+  CM.WALL_STATES = {
+    esistente: { label: 'Esistente', color: '#1B1E22' },
+    demolire: { label: 'Da demolire', color: '#E0A800' },
+    nuovo: { label: 'Da costruire', color: '#D23B2A' }
+  };
+
+  /* ---------- Modello della pianta ---------- */
+  const NODE_EPS = 0.005; // 5 mm
+  const P = CM.plan = {};
+
+  P.create = () => ({ nodes: {}, walls: {}, rooms: {}, openings: {}, columns: {}, beams: {} });
+
+  P.addNode = function (plan, x, y) {
+    const id = CM.uid('n');
+    plan.nodes[id] = { x: r3(x), y: r3(y) };
+    return id;
+  };
+
+  P.nodeAt = function (plan, x, y, eps) {
+    eps = eps == null ? NODE_EPS : eps;
+    let best = null, bestD = eps;
+    for (const id in plan.nodes) {
+      const n = plan.nodes[id];
+      const d = Math.hypot(n.x - x, n.y - y);
+      if (d <= bestD) { best = id; bestD = d; }
+    }
+    return best;
+  };
+
+  P.findWall = function (plan, a, b) {
+    for (const id in plan.walls) {
+      const w = plan.walls[id];
+      if ((w.a === a && w.b === b) || (w.a === b && w.b === a)) return id;
+    }
+    return null;
+  };
+
+  P.wallsOfNode = function (plan, nid) {
+    const out = [];
+    for (const id in plan.walls) { const w = plan.walls[id]; if (w.a === nid || w.b === nid) out.push(id); }
+    return out;
+  };
+
+  P.wallEnds = function (plan, w) { return [plan.nodes[w.a], plan.nodes[w.b]]; };
+  P.wallLen = function (plan, w) {
+    if (typeof w === 'string') w = plan.walls[w];
+    return G.dist(plan.nodes[w.a], plan.nodes[w.b]);
+  };
+
+  // Muro su cui giace (strettamente all'interno) il punto
+  P.wallUnder = function (plan, x, y, eps, exceptNode) {
+    eps = eps == null ? NODE_EPS : eps;
+    let best = null, bestD = eps;
+    for (const id in plan.walls) {
+      const w = plan.walls[id];
+      if (exceptNode && (w.a === exceptNode || w.b === exceptNode)) continue;
+      const A = plan.nodes[w.a], B = plan.nodes[w.b];
+      const pr = G.projSeg({ x, y }, A, B);
+      const fromEnds = Math.min(pr.tc * pr.L, (1 - pr.tc) * pr.L);
+      if (pr.d <= bestD && pr.t > 0 && pr.t < 1 && fromEnds > NODE_EPS) { best = { wid: id, t: pr.t, q: pr.q }; bestD = pr.d; }
+    }
+    return best;
+  };
+
+  P.splitWall = function (plan, wid, nid) {
+    const w = plan.walls[wid];
+    const A = plan.nodes[w.a];
+    const N = plan.nodes[nid];
+    const dAN = G.dist(A, N);
+    const id2 = CM.uid('w');
+    plan.walls[id2] = Object.assign({}, w, { a: nid, b: w.b });
+    w.b = nid;
+    for (const oid in plan.openings) {
+      const op = plan.openings[oid];
+      if (op.wall === wid && op.pos > dAN) { op.wall = id2; op.pos = r3(op.pos - dAN); }
+    }
+    return id2;
+  };
+
+  P.getOrCreateNode = function (plan, x, y) {
+    const existing = P.nodeAt(plan, x, y);
+    if (existing) return existing;
+    const id = P.addNode(plan, x, y);
+    const hit = P.wallUnder(plan, x, y, NODE_EPS, id);
+    if (hit) P.splitWall(plan, hit.wid, id);
+    return id;
+  };
+
+  // Aggiunge un muro da a a b gestendo incroci a T e sovrapposizioni con muri esistenti
+  P.addWall = function (plan, na, nb, props) {
+    if (na === nb) return [];
+    props = props || {};
+    for (const id of [na, nb]) {
+      const n = plan.nodes[id];
+      const hit = P.wallUnder(plan, n.x, n.y, NODE_EPS, id);
+      if (hit) P.splitWall(plan, hit.wid, id);
+    }
+    const A = plan.nodes[na], B = plan.nodes[nb];
+    const inner = [];
+    for (const id in plan.nodes) {
+      if (id === na || id === nb) continue;
+      const pr = G.projSeg(plan.nodes[id], A, B);
+      if (pr.d < NODE_EPS && pr.t > 0 && pr.t < 1 && Math.min(pr.t, 1 - pr.t) * pr.L > NODE_EPS) inner.push({ id, t: pr.t });
+    }
+    inner.sort((p, q) => p.t - q.t);
+    const chain = [na].concat(inner.map(i => i.id), [nb]);
+    const created = [];
+    for (let i = 0; i < chain.length - 1; i++) {
+      if (P.findWall(plan, chain[i], chain[i + 1])) continue;
+      const id = CM.uid('w');
+      plan.walls[id] = {
+        a: chain[i], b: chain[i + 1],
+        t: props.t != null ? props.t : 0.12,
+        h: props.h != null ? props.h : 2.7,
+        state: props.state || 'esistente'
+      };
+      created.push(id);
+    }
+    return created;
+  };
+
+  P.addRectRoom = function (plan, x0, y0, x1, y1, props) {
+    props = props || {};
+    const xa = Math.min(x0, x1), xb = Math.max(x0, x1), ya = Math.min(y0, y1), yb = Math.max(y0, y1);
+    const corners = [[xa, ya], [xb, ya], [xb, yb], [xa, yb]].map(c => P.getOrCreateNode(plan, c[0], c[1]));
+    for (let i = 0; i < 4; i++) P.addWall(plan, corners[i], corners[(i + 1) % 4], props.wall);
+    return P.addRoom(plan, corners, props);
+  };
+
+  P.addRoom = function (plan, nodeIds, props) {
+    props = props || {};
+    const id = CM.uid('r');
+    const type = props.type || 'altro';
+    plan.rooms[id] = {
+      nodes: nodeIds.slice(),
+      name: props.name || CM.roomType(type).label,
+      type,
+      h: props.h != null ? props.h : 2.7
+    };
+    return id;
+  };
+
+  P.roomPts = function (plan, room) {
+    if (typeof room === 'string') room = plan.rooms[room];
+    return room.nodes.map(id => plan.nodes[id]).filter(Boolean);
+  };
+
+  P.pointOnRoomBoundary = function (plan, room, p) {
+    const pts = P.roomPts(plan, room);
+    for (let i = 0; i < pts.length; i++) {
+      if (G.projSeg(p, pts[i], pts[(i + 1) % pts.length]).d < NODE_EPS) return true;
+    }
+    return false;
+  };
+
+  // Spessore del muro che corre lungo il lato a-b di una stanza (0 se nessun muro)
+  P.edgeThickness = function (plan, a, b) {
+    let t = 0;
+    for (const id in plan.walls) {
+      const w = plan.walls[id];
+      const A = plan.nodes[w.a], B = plan.nodes[w.b];
+      if (G.projSeg(A, a, b).d < NODE_EPS && G.projSeg(B, a, b).d < NODE_EPS) t = Math.max(t, w.t);
+    }
+    return t;
+  };
+
+  P.roomStats = function (plan, room) {
+    if (typeof room === 'string') room = plan.rooms[room];
+    const pts = P.roomPts(plan, room);
+    const n = pts.length;
+    if (n < 3) return { gross: 0, net: 0, perimeter: 0 };
+    const sA = G.signedArea(pts);
+    const gross = Math.abs(sA);
+    const orient = Math.sign(sA) || 1;
+    const d = [], L = [];
+    let perimeter = 0;
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n];
+      L[i] = G.dist(a, b);
+      d[i] = P.edgeThickness(plan, a, b) / 2;
+      perimeter += L[i];
+    }
+    let net = gross;
+    for (let i = 0; i < n; i++) net -= L[i] * d[i];
+    for (let i = 0; i < n; i++) {
+      const prev = (i - 1 + n) % n;
+      const P0 = pts[prev], P1 = pts[i], P2 = pts[(i + 1) % n];
+      const e1 = { x: P1.x - P0.x, y: P1.y - P0.y }, e2 = { x: P2.x - P1.x, y: P2.y - P1.y };
+      const cross = e1.x * e2.y - e1.y * e2.x;
+      const u = { x: -e1.x, y: -e1.y };
+      const ang = Math.atan2(Math.abs(u.x * e2.y - u.y * e2.x), u.x * e2.x + u.y * e2.y); // 0..π
+      const convex = Math.sign(cross) === orient;
+      const theta = convex ? ang : 2 * Math.PI - ang;
+      const tanHalf = Math.tan(theta / 2);
+      if (Math.abs(tanHalf) > 1e-6 && Math.abs(tanHalf) < 1e6) net += d[prev] * d[i] / tanHalf;
+    }
+    return { gross, net: Math.max(0, net), perimeter };
+  };
+
+  P.rectInfo = function (plan, room) {
+    if (typeof room === 'string') room = plan.rooms[room];
+    const pts = P.roomPts(plan, room);
+    if (pts.length !== 4) return null;
+    for (let i = 0; i < 4; i++) {
+      const a = pts[i], b = pts[(i + 1) % 4];
+      if (Math.abs(a.x - b.x) > NODE_EPS && Math.abs(a.y - b.y) > NODE_EPS) return null;
+    }
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
+  };
+
+  // Cambia larghezza/lunghezza di una stanza rettangolare spostando il lato destro / inferiore
+  P.setRectSize = function (plan, room, w, h) {
+    const info = P.rectInfo(plan, room);
+    if (!info) return false;
+    const nx = r3(info.x0 + w), ny = r3(info.y0 + h);
+    for (const id in plan.nodes) {
+      const p = plan.nodes[id];
+      const onRight = Math.abs(p.x - info.x1) < NODE_EPS && p.y > info.y0 - NODE_EPS && p.y < info.y1 + NODE_EPS;
+      const onBottom = Math.abs(p.y - info.y1) < NODE_EPS && p.x > info.x0 - NODE_EPS && p.x < info.x1 + NODE_EPS;
+      if (onRight) p.x = nx;
+      if (onBottom) p.y = ny;
+    }
+    P.tidy(plan);
+    return true;
+  };
+
+  P.setWallLength = function (plan, wid, len) {
+    const w = plan.walls[wid];
+    const A = plan.nodes[w.a], B = plan.nodes[w.b];
+    const L = G.dist(A, B);
+    if (L < 1e-6 || !(len > 0.05)) return false;
+    B.x = r3(A.x + (B.x - A.x) / L * len);
+    B.y = r3(A.y + (B.y - A.y) / L * len);
+    P.tidy(plan);
+    return true;
+  };
+
+  P.moveNodes = function (plan, ids, dx, dy) {
+    for (const id of ids) { const n = plan.nodes[id]; if (n) { n.x = r3(n.x + dx); n.y = r3(n.y + dy); } }
+  };
+
+  P.mergeNodes = function (plan, keep, drop) {
+    if (keep === drop || !plan.nodes[drop]) return;
+    for (const id in plan.walls) {
+      const w = plan.walls[id];
+      if (w.a === drop) w.a = keep;
+      if (w.b === drop) w.b = keep;
+    }
+    for (const id in plan.rooms) {
+      const r = plan.rooms[id];
+      r.nodes = r.nodes.map(n => (n === drop ? keep : n)).filter((n, i, arr) => n !== arr[(i + 1) % arr.length] || arr.length === 1);
+    }
+    delete plan.nodes[drop];
+    P.tidy(plan);
+  };
+
+  P.openingGeom = function (plan, op) {
+    const w = plan.walls[op.wall];
+    if (!w) return null;
+    const A = plan.nodes[w.a], B = plan.nodes[w.b];
+    const L = G.dist(A, B);
+    if (L < 1e-6) return null;
+    const u = { x: (B.x - A.x) / L, y: (B.y - A.y) / L };
+    const n = { x: -u.y, y: u.x };
+    const c = { x: A.x + u.x * op.pos, y: A.y + u.y * op.pos };
+    return { c, u, n, L, t: w.t, A, B, wall: w };
+  };
+
+  P.addOpening = function (plan, wid, pos, kind) {
+    const def = CM.OPENINGS[kind] || CM.OPENINGS.battente;
+    const id = CM.uid('o');
+    plan.openings[id] = { wall: wid, pos: r3(pos), kind, w: def.w, h: def.h, sill: def.sill, flipSide: false, flipHinge: false };
+    P.clampOpening(plan, id);
+    return id;
+  };
+
+  P.clampOpening = function (plan, oid) {
+    const op = plan.openings[oid];
+    const w = plan.walls[op.wall];
+    if (!w) return;
+    const L = P.wallLen(plan, w);
+    if (op.w > L - 0.02) op.w = r3(Math.max(0.2, L - 0.02));
+    const half = op.w / 2;
+    op.pos = r3(Math.min(Math.max(op.pos, half + 0.01), L - half - 0.01));
+  };
+
+  P.deleteWall = function (plan, wid) {
+    delete plan.walls[wid];
+    P.tidy(plan);
+  };
+
+  P.deleteRoom = function (plan, rid, withWalls) {
+    const room = plan.rooms[rid];
+    if (!room) return;
+    if (withWalls) {
+      for (const wid in plan.walls) {
+        const w = plan.walls[wid];
+        const A = plan.nodes[w.a], B = plan.nodes[w.b];
+        const mid = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+        if (![A, B, mid].every(p => P.pointOnRoomBoundary(plan, room, p))) continue;
+        let shared = false;
+        for (const oid in plan.rooms) {
+          if (oid === rid) continue;
+          if ([A, B, mid].every(p => P.pointOnRoomBoundary(plan, plan.rooms[oid], p))) { shared = true; break; }
+        }
+        if (!shared) delete plan.walls[wid];
+      }
+    }
+    delete plan.rooms[rid];
+    P.tidy(plan);
+  };
+
+  // Pulizia: muri degeneri o doppi, aperture orfane, nodi inutilizzati, stanze degeneri
+  P.tidy = function (plan) {
+    const seen = {};
+    for (const id of Object.keys(plan.walls)) {
+      const w = plan.walls[id];
+      const A = plan.nodes[w.a], B = plan.nodes[w.b];
+      if (!A || !B || w.a === w.b || G.dist(A, B) < NODE_EPS) { delete plan.walls[id]; continue; }
+      const key = w.a < w.b ? w.a + '|' + w.b : w.b + '|' + w.a;
+      if (seen[key]) {
+        for (const oid in plan.openings) if (plan.openings[oid].wall === id) {
+          const op = plan.openings[oid];
+          if (plan.walls[seen[key]].a !== w.a) op.pos = r3(G.dist(A, B) - op.pos);
+          op.wall = seen[key];
+        }
+        delete plan.walls[id];
+        continue;
+      }
+      seen[key] = id;
+    }
+    for (const id of Object.keys(plan.rooms)) {
+      const r = plan.rooms[id];
+      r.nodes = r.nodes.filter(n => plan.nodes[n]);
+      if (r.nodes.length < 3) delete plan.rooms[id];
+    }
+    for (const oid of Object.keys(plan.openings)) {
+      if (!plan.walls[plan.openings[oid].wall]) delete plan.openings[oid];
+      else P.clampOpening(plan, oid);
+    }
+    const used = {};
+    for (const id in plan.walls) { used[plan.walls[id].a] = 1; used[plan.walls[id].b] = 1; }
+    for (const id in plan.rooms) for (const n of plan.rooms[id].nodes) used[n] = 1;
+    for (const id of Object.keys(plan.nodes)) if (!used[id]) delete plan.nodes[id];
+  };
+
+  P.totals = function (plan) {
+    let gross = 0, net = 0, rooms = 0, outdoor = 0;
+    for (const id in plan.rooms) {
+      const s = P.roomStats(plan, plan.rooms[id]);
+      if (plan.rooms[id].type === 'balcone') { outdoor += s.net; continue; }
+      gross += s.gross; net += s.net; rooms++;
+    }
+    return { gross, net, rooms, outdoor };
+  };
+
+  P.bounds = function (plan) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const add = (x, y) => { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); };
+    for (const id in plan.nodes) add(plan.nodes[id].x, plan.nodes[id].y);
+    for (const id in plan.columns) { const c = plan.columns[id]; add(c.x - c.w / 2, c.y - c.d / 2); add(c.x + c.w / 2, c.y + c.d / 2); }
+    for (const id in plan.beams) { const b = plan.beams[id]; add(b.x1, b.y1); add(b.x2, b.y2); }
+    if (!isFinite(minX)) return null;
+    return { minX, minY, maxX, maxY };
+  };
+
+  /* ---------- Progetto ---------- */
+  const PR = CM.project = {};
+  PR.create = function (name) {
+    const vid = CM.uid('v');
+    const now = Date.now();
+    return {
+      v: 1,
+      id: CM.uid('p'),
+      name: name || 'Nuovo progetto',
+      created: now,
+      updated: now,
+      north: 0,
+      settings: { wallT: 0.12, wallH: 2.7, newState: 'esistente', showDims: true, showGrid: true },
+      variants: [{ id: vid, name: 'Principale', plan: P.create() }],
+      active: vid
+    };
+  };
+  PR.variant = (p) => p.variants.find(v => v.id === p.active) || p.variants[0];
+  PR.plan = (p) => PR.variant(p).plan;
+  PR.summary = function (p) {
+    const t = P.totals(PR.plan(p));
+    return { id: p.id, name: p.name, updated: p.updated, area: t.net, gross: t.gross, rooms: t.rooms, variants: p.variants.length, sample: !!p.sample };
+  };
+
+  /* ---------- Autotest (eseguito anche nell'app sul telefono) ---------- */
+  CM.selfTest = function () {
+    const errors = [];
+    const near = (a, b, tol, msg) => { if (Math.abs(a - b) > (tol || 1e-3)) errors.push(msg + ': atteso ' + b + ', ottenuto ' + a); };
+    const plan = P.create();
+    const r1 = P.addRectRoom(plan, 0, 0, 4, 3, { type: 'camera', wall: { t: 0.12 } });
+    near(Object.keys(plan.walls).length, 4, 0, 'muri prima stanza');
+    near(P.roomStats(plan, r1).gross, 12, 1e-6, 'area lorda');
+    near(P.roomStats(plan, r1).net, 3.88 * 2.88, 1e-6, 'area netta');
+    // seconda stanza affiancata con lato in comune parziale (incrocio a T)
+    const r2 = P.addRectRoom(plan, 4, 1, 7, 3, { type: 'bagno', wall: { t: 0.12 } });
+    near(Object.keys(plan.walls).length, 8, 0, 'muri con lato condiviso');
+    near(Object.keys(plan.rooms).length, 2, 0, 'stanze');
+    // apertura e split
+    const wid = Object.keys(plan.walls).find(id => { const w = plan.walls[id]; const A = plan.nodes[w.a], B = plan.nodes[w.b]; return A.y === 0 && B.y === 0; });
+    const oid = P.addOpening(plan, wid, 2, 'finestra');
+    near(plan.openings[oid].pos, 2, 1e-6, 'posizione finestra');
+    const mid = P.getOrCreateNode(plan, 1, 0);
+    near(Object.keys(plan.walls).length, 9, 0, 'split muro');
+    near(P.wallLen(plan, plan.openings[oid].wall), 3, 1e-6, 'finestra sul tratto giusto');
+    near(plan.openings[oid].pos, 1, 1e-6, 'posizione finestra dopo split');
+    // ridimensiona stanza
+    P.setRectSize(plan, r1, 4.5, 3);
+    near(P.rectInfo(plan, r1).w, 4.5, 1e-6, 'nuova larghezza');
+    // eliminazione stanza: il muro in comune resta
+    P.deleteRoom(plan, r2, true);
+    if (!plan.rooms[r1]) errors.push('stanza 1 sparita');
+    near(Object.keys(plan.rooms).length, 1, 0, 'stanze dopo eliminazione');
+    if (!mid) errors.push('nodo intermedio non creato');
+    // stanza a L: area netta coerente
+    const pl = P.create();
+    const ids = [[0, 0], [4, 0], [4, 2], [2, 2], [2, 4], [0, 4]].map(c => P.addNode(pl, c[0], c[1]));
+    for (let i = 0; i < 6; i++) P.addWall(pl, ids[i], ids[(i + 1) % 6], { t: 0.2 });
+    const rl = P.addRoom(pl, ids, {});
+    near(P.roomStats(pl, rl).gross, 12, 1e-6, 'area L lorda');
+    // L inset 0.1: (3.8x1.8) + (1.8x2.0) = 6.84 + 3.6 = 10.44
+    near(P.roomStats(pl, rl).net, 10.44, 1e-6, 'area L netta');
+    // formattazione e parsing
+    near(fmt.parseM('3,8'), 3.8, 1e-9, 'parse 3,8');
+    near(fmt.parseM('380cm'), 3.8, 1e-9, 'parse 380cm');
+    near(fmt.parseM('80', 'cm'), 0.8, 1e-9, 'parse 80 cm');
+    return errors;
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = CM;
+})(typeof window !== 'undefined' ? window : globalThis);

@@ -1,0 +1,117 @@
+name: Build, test e release APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Test della logica (pianta, geometria)
+        run: node tests/plan.test.js
+
+      - name: Font offline (Instrument Sans, JetBrains Mono)
+        run: |
+          mkdir -p /tmp/fonts && cd /tmp/fonts
+          npm pack @fontsource/instrument-sans@5 @fontsource/jetbrains-mono@5
+          for f in *.tgz; do mkdir -p "${f%.tgz}" && tar xzf "$f" -C "${f%.tgz}"; done
+          DEST="$GITHUB_WORKSPACE/app/src/main/assets/www/fonts"
+          mkdir -p "$DEST"
+          cp */package/files/instrument-sans-latin-{400,500,600,700}-normal.woff2 "$DEST"/
+          cp */package/files/jetbrains-mono-latin-{400,500}-normal.woff2 "$DEST"/
+          ls -la "$DEST"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compila APK
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Rinomina APK
+        run: |
+          VER="0.1.${{ github.run_number }}"
+          cp app/build/outputs/apk/release/app-release.apk "CasaMia-$VER.apk"
+          echo "VER=$VER" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: CasaMia-*.apk
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+
+      - name: Abilita KVM per l'emulatore
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Avvia l'app su emulatore Android e verifica
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash -c 'APK=$(ls CasaMia-*.apk | head -1); adb install -r "$APK" && adb logcat -c && adb shell am start -W -n it.casamia.app/.MainActivity && sleep 30 && adb logcat -d -s CasaMia:I > logcat.txt; adb exec-out screencap -p > schermata.png; cat logcat.txt; grep -q CASAMIA_READY logcat.txt && grep -q CASAMIA_SELFTEST_OK logcat.txt && ! grep -qE "Uncaught|CASAMIA_SELFTEST_FAIL" logcat.txt'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-emulatore
+          path: |
+            logcat.txt
+            schermata.png
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-emulatore
+      - name: Pubblica release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.${{ github.run_number }}
+          name: Casa Mia 0.1.${{ github.run_number }}
+          make_latest: true
+          body: |
+            APK testato su emulatore Android (avvio + autotest della pianta superati).
+            Da telefono: scarica il file .apk qui sotto e aprilo per installarlo.
+            Commit: ${{ github.sha }}
+          files: |
+            CasaMia-*.apk
+            schermata.png
