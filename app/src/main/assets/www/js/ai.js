@@ -30,8 +30,19 @@
     },
 
     async call(model, parts, opts) {
-      try { return await AI._call(model, parts, opts); } catch (e) {
+      try { return await AI._callRetry(model, parts, opts); } catch (e) {
         const msg = String(e.message || '');
+        if (AI._busy(e)) {
+          // Modello sovraccarico: provo con un altro modello Flash, senza cambiarlo per sempre
+          const alt = await AI.pickModel(model, '', !!(opts && opts.image));
+          if (alt && alt !== model) {
+            if (CM.ui) CM.ui.toast('Gemini \u00e8 molto occupato: provo con ' + alt);
+            try { return await AI._call(alt, parts, opts); } catch (e2) { if (!AI._busy(e2)) throw e2; }
+          }
+          throw new Error('I server di Google Gemini sono sovraccarichi in questo momento. Riprova tra qualche minuto (non dipende dall\u2019app n\u00e9 dalla tua chiave). Intanto puoi usare \u201cRiconosci i muri\u201d, che funziona senza Gemini.');
+        }
+        if (e.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(msg)) throw new Error('Hai raggiunto il limite gratuito di Gemini per ora (o per oggi). Riprova pi\u00f9 tardi.');
+        if (e.status === 400 && /API key/i.test(msg)) throw new Error('La chiave Gemini non \u00e8 valida: controllala in Impostazioni \u203a Assistente Gemini.');
         if (!/no longer available|not found|not supported|deprecated|update your code/i.test(msg)) throw e;
         const wantImage = !!(opts && opts.image);
         const nm = await AI.pickModel(model, msg, wantImage);
@@ -39,6 +50,20 @@
         CM.store.pref(wantImage ? 'geminiImageModel' : 'geminiModel', nm);
         if (CM.ui) CM.ui.toast('Gemini: passo al modello ' + nm);
         return AI._call(nm, parts, opts);
+      }
+    },
+
+    _busy(e) { return e && (e.status === 503 || e.status === 500 || /high demand|overloaded|UNAVAILABLE|try again later/i.test(String(e.message || '') + ' ' + (e.code || ''))); },
+
+    // Riprova da solo un paio di volte quando Google \u00e8 sovraccarico
+    async _callRetry(model, parts, opts) {
+      const waits = [2000, 6000];
+      for (let i = 0; ; i++) {
+        try { return await AI._call(model, parts, opts); } catch (e) {
+          if (!AI._busy(e) || i >= waits.length) throw e;
+          if (i === 0 && CM.ui) CM.ui.toast('Gemini \u00e8 occupato, riprovo\u2026');
+          await new Promise(r => setTimeout(r, waits[i]));
+        }
       }
     },
 
@@ -57,7 +82,8 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         const msg = (data.error && data.error.message) || ('HTTP ' + r.status);
-        throw new Error(msg);
+        const err = new Error(msg); err.status = r.status; err.code = data.error && data.error.status;
+        throw err;
       }
       const cand = data.candidates && data.candidates[0];
       const out = { text: '', images: [] };
