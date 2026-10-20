@@ -201,10 +201,10 @@
     { t: 'Muri liberi', p: 'Con “Muro” tocchi i punti uno dopo l’altro: perfetto per stanze a L o storte. Tocca di nuovo il primo punto per chiudere la stanza.', art: 'wall' },
     { t: 'Porte e finestre', p: 'Scegli il tipo e tocca un muro. Poi trascinala lungo il muro e correggi larghezza, altezza e verso di apertura nel pannello.', art: 'opening' },
     { t: 'Ristrutturazione', p: 'Ogni muro ha uno stato: nero esistente, giallo da demolire, rosso da costruire. Toccalo e cambialo dal pannello: servirà anche per i costi.', art: 'states' },
-    { t: 'Per modificare', p: 'Tocca un elemento per selezionarlo; trascina i pallini blu per spostare gli angoli. Un dito sposta la vista, due dita fanno lo zoom. Freccia indietro per annullare.', art: 'select' },
+    { t: 'Per modificare', p: 'Tocca un elemento per selezionarlo; trascina i pallini blu per spostare gli angoli. Un dito sposta la vista, due dita fanno lo zoom. Freccia indietro per annullare. Se compare il ! rosso, toccalo: vedi gli errori e l\u2019app li corregge per te.', art: 'select' },
     { t: 'Arredo e impianti', p: 'Con \u201cArredo\u201d scegli un mobile dal catalogo e tocchi dove metterlo: vicino a un muro si appoggia da solo. I mobili con il pallino arancione si sovrappongono, stanno stretti o bloccano una porta. Con \u201cImpianti\u201d segni prese, luci, acqua, scarichi e termosifoni.', art: 'arredo' },
     { t: 'Finiture e costi', p: 'Tocca una stanza: nel pannello scegli pavimento, rivestimento, pittura e carta da parati e vedi subito scatole, litri e costo. Nella scheda Costi trovi budget, materiali e manodopera, preventivi, varianti e controllo delle norme.', art: 'costi' },
-    { t: 'Vista 3D', p: 'Gira intorno alla casa o fai una passeggiata con il joystick. Confronta prima e dopo i lavori e guarda la luce del sole nelle varie ore e stagioni.', art: '3d' },
+    { t: '3D e stile', p: 'Nel 3D tocca una parete, il pavimento o un mobile e cambiane colori e materiali. Con \u201cStili\u201d trasformi la casa in un tocco (Scandinavo, Japandi, Boho\u2026); con \u201cIspirazione\u201d usi le tue foto e idee. Puoi anche passeggiare dentro casa.', art: '3d' },
     { t: 'Negozi, lavori e condivisione', p: 'In Arredo importi articoli da IKEA, Leroy Merlin e altri negozi. In Lavori tieni lista acquisti, pagamenti, cantiere, ditte, diario fotografico e promemoria. Dal menu \u22ee condividi il progetto, esporti il PDF e parli con l\u2019assistente.', art: 'share' },
   ];
   const TUT_ART = {

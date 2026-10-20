@@ -59,6 +59,7 @@ public class MainActivity extends Activity {
     private static final String TAG = "CasaMia";
     private static final String START_URL = "https://appassets.androidplatform.net/assets/www/index.html";
     private static final int FILE_CHOOSER = 4201;
+    private static final int BACKUP_LINK = 4202;
 
     private WebView web;
     private boolean isResumed = false;
@@ -253,7 +254,9 @@ public class MainActivity extends Activity {
                     byte[] buf = new byte[65536];
                     int n, tot = 0;
                     while (in != null && (n = in.read(buf)) > 0) { bo.write(buf, 0, n); tot += n; if (tot > 60 * 1024 * 1024) break; }
-                    out = new String(bo.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+                    String mime = getContentResolver().getType(fUri);
+                    if (mime != null && mime.startsWith("image/")) out = "data:" + mime + ";base64," + Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP);
+                    else out = new String(bo.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
                 } catch (Exception e) {
                     Log.w(TAG, "Lettura file condiviso non riuscita", e);
                     out = "";
@@ -353,6 +356,21 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == BACKUP_LINK) {
+            boolean ok = false;
+            String name = "";
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                Uri u = data.getData();
+                try {
+                    getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } catch (Exception e) { Log.w(TAG, "Permesso persistente non concesso", e); }
+                getSharedPreferences("casamia", MODE_PRIVATE).edit().putString("backupUri", u.toString()).apply();
+                ok = true;
+                name = u.getAuthority() != null && u.getAuthority().contains("google") ? "Google Drive" : "la cartella scelta";
+            }
+            web.evaluateJavascript("window.CasaMia && CasaMia.onBackupLinked && CasaMia.onBackupLinked(" + ok + "," + org.json.JSONObject.quote(name) + ")", null);
+            return;
+        }
         if (requestCode == FILE_CHOOSER) {
             if (fileCallback != null) {
                 Uri[] res;
@@ -389,6 +407,49 @@ public class MainActivity extends Activity {
 
     /** Archivio chiave/valore su file nella memoria privata dell'app. */
     private class Bridge {
+        /** Sceglie (una volta) il file di backup su Drive o altrove: poi viene riscritto a ogni salvataggio. */
+        @JavascriptInterface
+        public void linkBackup() {
+            runOnUiThread(() -> {
+                Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("application/json");
+                i.putExtra(Intent.EXTRA_TITLE, "CasaMia-backup.casamia.json");
+                i.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                try { startActivityForResult(i, BACKUP_LINK); } catch (Exception e) { Log.e(TAG, "Selettore non disponibile", e); }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean hasBackupLink() {
+            return getSharedPreferences("casamia", MODE_PRIVATE).getString("backupUri", null) != null;
+        }
+
+        @JavascriptInterface
+        public void unlinkBackup() {
+            getSharedPreferences("casamia", MODE_PRIVATE).edit().remove("backupUri").apply();
+        }
+
+        /** Riscrive il file di backup collegato (in un thread: Drive pu\u00f2 essere lento). */
+        @JavascriptInterface
+        public void writeBackup(final String base64) {
+            final String us = getSharedPreferences("casamia", MODE_PRIVATE).getString("backupUri", null);
+            if (us == null) return;
+            new Thread(() -> {
+                boolean ok;
+                try (OutputStream os = getContentResolver().openOutputStream(Uri.parse(us), "wt")) {
+                    if (os == null) throw new IOException("nessun flusso");
+                    os.write(Base64.decode(base64, Base64.DEFAULT));
+                    ok = true;
+                } catch (Exception e) {
+                    Log.w(TAG, "Backup su Drive non scritto", e);
+                    ok = false;
+                }
+                final boolean r = ok;
+                runOnUiThread(() -> web.evaluateJavascript("window.CasaMia && CasaMia.onBackupWritten && CasaMia.onBackupWritten(" + r + ")", null));
+            }).start();
+        }
+
         @JavascriptInterface
         public String takeShared() {
             final String[] out = { null };
@@ -501,7 +562,20 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void printHtml(String html, String title) {
+        public void printHtml(String html, String title) { printHtmlMedia(html, title, "A4"); }
+
+        /** Stampa/PDF con il formato carta scelto: A4, A4L (orizzontale), A3, A3L, A2L, A1L. */
+        @JavascriptInterface
+        public void printHtmlMedia(String html, String title, String media) {
+            final PrintAttributes.MediaSize size;
+            switch (media == null ? "A4" : media) {
+                case "A4L": size = PrintAttributes.MediaSize.ISO_A4.asLandscape(); break;
+                case "A3": size = PrintAttributes.MediaSize.ISO_A3; break;
+                case "A3L": size = PrintAttributes.MediaSize.ISO_A3.asLandscape(); break;
+                case "A2L": size = PrintAttributes.MediaSize.ISO_A2.asLandscape(); break;
+                case "A1L": size = PrintAttributes.MediaSize.ISO_A1.asLandscape(); break;
+                default: size = PrintAttributes.MediaSize.ISO_A4;
+            }
             runOnUiThread(() -> {
                 printView = new WebView(MainActivity.this);
                 printView.getSettings().setJavaScriptEnabled(false);
@@ -511,7 +585,7 @@ public class MainActivity extends Activity {
                         PrintManager pm = (PrintManager) getSystemService(Context.PRINT_SERVICE);
                         String job = (title == null || title.isEmpty() ? "Casa Mia" : title);
                         PrintDocumentAdapter adapter = view.createPrintDocumentAdapter(job);
-                        pm.print(job, adapter, new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).build());
+                        pm.print(job, adapter, new PrintAttributes.Builder().setMediaSize(size).setMinMargins(PrintAttributes.Margins.NO_MARGINS).build());
                     }
                 });
                 printView.loadDataWithBaseURL("https://appassets.androidplatform.net/", html, "text/html", "utf-8", null);

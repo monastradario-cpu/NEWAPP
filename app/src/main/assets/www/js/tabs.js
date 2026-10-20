@@ -246,6 +246,7 @@
       el('h1', { text: 'Costi' }),
       el('div', { class: 'actions', style: 'margin:0' }, [
         el('button', { class: 'btn', text: 'Prezzi di riferimento', onclick: () => T.pricesDialog() }),
+        el('button', { class: 'btn', text: 'Computo Excel per le ditte', onclick: () => CM.fiscal.exportComputo(project) }),
         el('button', { class: 'btn', text: 'Esporta PDF', onclick: () => CM.share.pdf(project) })
       ])
     ]));
@@ -273,6 +274,8 @@
         el('div', { class: 'card-row small' }, [el('span', { html: '<span class="dot mat"></span>Materiali ' + CM.fmt.eur(c.mat) }), el('span', { html: '<span class="dot lab"></span>Manodopera ' + CM.fmt.eur(c.lab) })])
       ]) : null
     ]));
+    // IVA e detrazioni
+    if (c.total > 0) box.appendChild(CM.fiscal.card(project, () => app().refreshTab()));
     // superfici
     const sf = P.surfaceTotals(plan);
     if (sf.rooms) box.appendChild(card([

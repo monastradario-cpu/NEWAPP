@@ -199,19 +199,12 @@
   };
 
   /* ---------- Stili guidati ---------- */
-  CM.STYLES = [
-    { id: 'scandinavo', label: 'Scandinavo', desc: 'Luce, legni chiari, bianco e tessuti naturali', walls: '#F2F0EB', accent: '#B8C4B0', floor: 'm-parquet-rovere', wood: '#D8C3A5', fabric: '#E3DED5', metal: '#2B2B2B' },
-    { id: 'industriale', label: 'Industriale', desc: 'Cemento, metallo nero, legno scuro e pelle', walls: '#D6D4CF', accent: '#3A3F46', floor: 'm-gres-cemento', wood: '#6B4E37', fabric: '#8B5E3C', metal: '#1B1E22' },
-    { id: 'moderno', label: 'Moderno', desc: 'Linee pulite, grigi caldi e un accento di colore', walls: '#EDEBE6', accent: '#3E4E66', floor: 'm-gres-marmo', wood: '#B49A7E', fabric: '#8C9AAE', metal: '#9AA0A6' },
-    { id: 'classico', label: 'Classico', desc: 'Legni caldi, marmo e toni avorio', walls: '#EFE6D6', accent: '#8A6A4A', floor: 'm-parquet-rovere', wood: '#8A5A3C', fabric: '#C9B79C', metal: '#B08D57' },
-    { id: 'mediterraneo', label: 'Mediterraneo', desc: 'Bianco calce, terracotta, blu e fibre naturali', walls: '#F6F2EA', accent: '#C98B6B', floor: 'm-gres-cemento', wood: '#B8946A', fabric: '#3E5C7A', metal: '#6B7079' },
-    { id: 'minimal', label: 'Minimal', desc: 'Pochi elementi, bianco e grigio, nessun decoro', walls: '#F4F3EF', accent: '#9AA0A6', floor: 'm-resina', wood: '#D9D4CB', fabric: '#D6D4CF', metal: '#9AA0A6' }
-  ];
+  // (gli stili sono in style.js)
 
   // Tipi di mobile "tessuto" o "legno" per applicare uno stile
   CM.SHAPE_FINISH = {
     sofa: 'fabric', sofa_l: 'fabric', armchair: 'fabric', bed: 'fabric', rug: 'fabric', curtain: 'fabric',
     table: 'wood', round_table: 'wood', desk: 'wood', shelf: 'wood', cabinet: 'wood', chair: 'wood', wardrobe: 'wood',
-    lamp_floor: 'metal', lamp_ceiling: 'metal'
+    lamp_floor: 'metal', lamp_ceiling: 'metal', kitchen_base: 'wood', kitchen_wall: 'wood', kitchen_tall: 'wood', basin: 'wood', tv_stand: 'wood', bookcase: 'wood'
   };
 })(typeof window !== 'undefined' ? window : globalThis);

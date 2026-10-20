@@ -42,16 +42,19 @@ jobs:
       - name: Compila APK
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Rinomina APK
+      - name: Rinomina APK e crea la versione per PC
         run: |
           VER="0.1.${{ github.run_number }}"
           cp app/build/outputs/apk/release/app-release.apk "CasaMia-$VER.apk"
+          node tools/build-pc.js "CasaMia-PC-$VER.html"
           echo "VER=$VER" >> $GITHUB_ENV
 
       - uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: CasaMia-*.apk
+          path: |
+            CasaMia-*.apk
+            CasaMia-PC-*.html
 
   release:
     needs: build
@@ -70,6 +73,8 @@ jobs:
           make_latest: true
           body: |
             Da telefono: scarica il file .apk qui sotto e aprilo per installarlo.
+            Da PC Windows: scarica CasaMia-PC-….html e aprilo con doppio clic (Chrome o Edge).
             Commit: ${{ github.sha }}
           files: |
             CasaMia-*.apk
+            CasaMia-PC-*.html

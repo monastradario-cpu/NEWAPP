@@ -176,6 +176,28 @@
     return ok;
   };
 
+  /* ---------- Backup su Google Drive, aggiornato da solo ---------- */
+  SH.driveLinked = () => !!(native() && native().hasBackupLink && native().hasBackupLink());
+  SH.linkDrive = async function () {
+    if (!native() || !native().linkBackup) { U().toast('Funziona nell\u2019app sul telefono'); return; }
+    const ok = await U().dialog({ title: 'Backup su Google Drive', text: 'Ora si apre la finestra \u201cSalva\u201d di Android: tocca \u2630 in alto a sinistra, scegli Drive e la cartella che vuoi, poi Salva. Da quel momento ogni modifica ai progetti aggiorna quel file da sola (serve l\u2019app Google Drive installata). Per ripristinare: Carica un progetto \u203a scegli quel file.', actions: [{ label: 'Annulla', value: false }, { label: 'Scegli dove salvare', value: true, primary: true }] });
+    if (ok) native().linkBackup();
+  };
+  CM.onBackupLinked = function (ok, where) {
+    if (!ok) { U().toast('Backup su Drive non attivato'); return; }
+    CM.store.pref('driveBackup', true);
+    SH.driveBackup(true);
+    U().dialog({ title: 'Backup su Drive attivo', text: 'Ho salvato una copia di tutti i progetti su ' + where + '. Si aggiorner\u00e0 da sola dopo ogni modifica. Resta anche la copia settimanale sul telefono in Download/CasaMia.' });
+  };
+  CM.onBackupWritten = function (ok) { CM.store.pref(ok ? 'driveOk' : 'driveErr', Date.now()); if (!ok && !SH._driveWarned) { SH._driveWarned = true; U().toast('Backup su Drive non riuscito: controlla la connessione o ricollega il file'); } };
+  let driveTimer = 0;
+  SH.driveBackup = function (now) {
+    if (!SH.driveLinked()) return;
+    clearTimeout(driveTimer);
+    const go = () => { try { native().writeBackup(b64utf8(SH.backupJSON())); } catch (e) { console.error(e); } };
+    if (now) go(); else driveTimer = setTimeout(go, 20000);
+  };
+
   SH.backupAll = function () {
     const data = SH.backupJSON();
     SH.file('CasaMia-backup-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json', data);

@@ -111,6 +111,8 @@
     { id: 'column', label: 'Pilastro', icon: 'column' },
     { id: 'beam', label: 'Trave', icon: 'beam' },
     { id: 'underlay', label: 'Planimetria', icon: 'image' },
+    { id: 'measure', label: 'Metro', icon: 'ruler' },
+    { id: 'multi', label: 'Seleziona pi\u00f9', icon: 'select' },
     { id: 'erase', label: 'Cancella zona', icon: 'trash' }
   ];
 
@@ -128,9 +130,23 @@
     text = String(text || '').trim();
     if (!text) { U.toast('File vuoto o non leggibile'); return; }
     if (/^\s*[{[]/.test(text)) { afterImport(CM.share.importText(text)); return; }
-    const m = /https?:\/\/\S+/.exec(text);
-    if (m && S.isNative && window.CasaMiaAndroid.openShop) { U.toast('Apro il negozio: tocca \u201cImporta\u201d sugli articoli'); window.CasaMiaAndroid.openShop(m[0]); return; }
-    U.toast('Non so cosa fare con questo contenuto');
+    const isImg = /^data:image\//.test(text);
+    const m = isImg ? null : /https?:\/\/\S+/.exec(text);
+    (async () => {
+      let what = isImg ? 'board' : null;
+      if (m) what = await U.menu('Cosa faccio con questo link?', [{ id: 'board', label: 'Aggiungi alla bacheca idee', icon: 'image' }, { id: 'shop', label: 'Importa articoli dal negozio', icon: 'sofa' }]);
+      if (!what) return;
+      if (what === 'shop') { if (S.isNative && window.CasaMiaAndroid.openShop) { U.toast('Apro il negozio: tocca \u201cImporta\u201d sugli articoli'); window.CasaMiaAndroid.openShop(m[0]); } return; }
+      if (!project) {
+        const list = S.listProjects ? S.listProjects() : [];
+        if (!list.length) { U.toast('Crea prima un progetto'); return; }
+        const pid = list.length === 1 ? list[0].id : await U.menu('In quale progetto?', list.map(p => ({ id: p.id, label: p.name, icon: 'house' })));
+        if (!pid) return;
+        openProject(pid);
+      }
+      CM.inspire.addToBoard(persCtx(), isImg ? text : m[0]);
+    })();
+    if (!isImg && !m) U.toast('Non so cosa fare con questo contenuto');
   };
 
   /* ---------- Modalit\u00e0 semplice / completa ---------- */
@@ -442,7 +458,8 @@
     const plan = editor.plan;
     const scroll = sheet.scrollTop;
     sheet.innerHTML = '';
-    const has = sheetMode === 'underlay' || (sel.type && sel.type !== 'node');
+    const multi = editor.tool === 'multi' && editor.multi;
+    const has = sheetMode === 'underlay' || (sel.type && sel.type !== 'node') || !!multi;
     sheet.classList.toggle('hidden', !has);
     $('stage').classList.toggle('with-sheet', !!has);
     $('hint').classList.toggle('hidden', !!has);
@@ -451,7 +468,19 @@
     const mut = ctx.mut;
     sheet.appendChild(el('div', { class: 'sheet-grab', 'aria-hidden': 'true' }));
 
-    if (sheetMode === 'underlay') {
+    if (multi) {
+      const n = P.setCount(multi);
+      sheet.appendChild(sheetHead('Selezione', n + (n === 1 ? ' elemento' : ' elementi')));
+      sheet.appendChild(el('p', { class: 'muted small', text: 'Trascina dentro il riquadro blu per spostare tutto insieme. ' + [multi.rooms.length ? multi.rooms.length + ' stanze' : '', multi.walls.length ? multi.walls.length + ' muri' : '', multi.furniture.length ? multi.furniture.length + ' mobili' : '', multi.fixtures.length ? multi.fixtures.length + ' impianti' : ''].filter(Boolean).join(', ') }));
+      // la copia va nello spazio libero a destra di tutta la casa
+      const offX = () => { const bb = P.setBounds(plan, multi), all = P.bounds(Object.assign({}, plan, { underlay: null })); return bb && all ? all.maxX + 0.6 - bb.x0 : 1; };
+      sheet.appendChild(el('div', { class: 'actions' }, [
+        el('button', { class: 'btn primary', html: U.icon('copy', 18) + 'Duplica', onclick: () => { let out; editor.mutate(pl => { out = P.copySet(pl, pl, multi, offX(), 0); }, 'duplicate'); editor.setMulti(out); renderSheet(); U.toast('Duplicato a destra: trascinalo dove vuoi'); } }),
+        el('button', { class: 'btn', text: 'Copia', onclick: () => { CM.clipboard = { plan: CM.clone(plan), set: CM.clone(multi) }; U.toast('Copiato: incolla da \u22ee \u203a Incolla, anche in un\u2019altra variante o progetto'); } }),
+        el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina', onclick: () => { editor.mutate(pl => P.deleteSet(pl, multi), 'delete'); editor.setMulti(null); renderSheet(); U.toast('Eliminati \u00b7 puoi annullare'); } }),
+        el('button', { class: 'btn', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); renderSheet(); } })
+      ]));
+    } else if (sheetMode === 'underlay') {
       CM.sheets.underlay(sheet, ctx);
     } else if (sel.type === 'room' && plan.rooms[sel.id]) {
       const room = plan.rooms[sel.id];
@@ -518,6 +547,8 @@
       if (line.length > 1) fields.appendChild(U.segField('Modifica', [{ value: 'one', label: 'Solo questo tratto' }, { value: 'all', label: 'Tutta la parete (' + line.length + ' tratti)' }], whole ? 'all' : 'one', v => { editor.wallScope = v; renderSheet(); }));
       fields.appendChild(U.numField('Lunghezza di questo tratto', L, 'm', v => mut(pl => P.stretchWall(pl, sel.id, v, editor.stretchSide || 'b')), { min: 0.1, max: 100 }));
       fields.appendChild(U.segField('Allunga o accorcia verso', [{ value: 'a', label: sideLabel('a') }, { value: 'b', label: sideLabel('b') }], side, v => { editor.stretchSide = v; }));
+      const angDeg = ((Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI) + 360) % 360;
+      fields.appendChild(U.numField('Angolo', Math.round(angDeg * 10) / 10, '\u00b0', v => mut(pl => P.setWallAngle(pl, sel.id, v)), { min: 0, max: 360 }));
       fields.appendChild(U.numField('Spessore', w.t, 'cm', v => mut(pl => { targets.forEach(id => { if (pl.walls[id]) pl.walls[id].t = v; }); }), { min: 0.03, max: 1.2 }));
       fields.appendChild(U.numField('Altezza', w.h || 2.7, 'cm', v => mut(pl => { targets.forEach(id => { if (pl.walls[id]) pl.walls[id].h = v; }); }), { min: 0.3, max: 8 }));
       fields.appendChild(U.segField('Stato', Object.keys(CM.WALL_STATES).map(k => ({ value: k, label: CM.WALL_STATES[k].label, dot: k })), w.state, v => mut(pl => { targets.forEach(id => { if (pl.walls[id]) pl.walls[id].state = v; }); }, 'state')));
@@ -539,7 +570,18 @@
         U.stat('Lorda per faccia', CM.fmt.area(wsf.gross)), U.stat('Netta per faccia', CM.fmt.area(wsf.net)),
         U.stat('Netta, due facce', CM.fmt.area(wsf.net * 2)), U.stat('Aperture', ops + ' · ' + CM.fmt.area(wsf.openings))
       ]));
-      sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn', text: 'Vista frontale (prospetto)', onclick: () => CM.elevation && CM.elevation.open(editor.plan, sel.id) })]));
+      sheet.appendChild(el('div', { class: 'actions' }, [
+        el('button', { class: 'btn', text: 'Vista frontale (prospetto)', onclick: () => CM.elevation && CM.elevation.open(editor.plan, sel.id) }),
+        el('button', { class: 'btn', text: 'Curva il muro', onclick: async () => {
+          const v = await U.promptDialog('Muro ad arco', '50', { label: 'Freccia (quanto sporge al centro)', unit: 'cm', inputmode: 'decimal', mono: true, text: 'Il muro diventa un arco che sporge verso l\u2019esterno della misura scritta. Con un numero negativo rientra verso la stanza. Le porte e finestre su questo muro vanno rimesse.', ok: 'Curva' });
+          if (v == null) return;
+          let sag = CM.fmt.parseM(v, 'cm');
+          // positivo = verso l'esterno della stanza
+          { const A0 = plan.nodes[w.a], B0 = plan.nodes[w.b], L0 = CM.geom.dist(A0, B0); const nn = { x: -(B0.y - A0.y) / L0, y: (B0.x - A0.x) / L0 }; const mid = { x: (A0.x + B0.x) / 2 + nn.x * 0.2, y: (A0.y + B0.y) / 2 + nn.y * 0.2 }; if (P.roomOf(plan, mid)) sag = -sag; }
+          if (!isFinite(sag) || Math.abs(sag) < 0.02) { U.toast('Freccia non valida'); return; }
+          editor.mutate(pl => P.curveWall(pl, sel.id, sag), 'curve'); editor.select({}); U.toast('Muro curvato \u00b7 puoi annullare');
+        } })
+      ]));
       sheet.appendChild(el('div', { class: 'actions' }, [
         el('button', { class: 'btn', text: 'Foto delle tracce', onclick: () => CM.tabs.addDiary({ type: 'tracce', wall: sel.id, room: P.roomOf(plan, { x: (plan.nodes[w.a].x + plan.nodes[w.b].x) / 2, y: (plan.nodes[w.a].y + plan.nodes[w.b].y) / 2 }) || '' }) }),
         el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina muro', onclick: () => editor.deleteSelection() })
@@ -620,7 +662,9 @@
     if (!file) return;
     U.toast('Preparo la planimetria…');
     try {
-      const img = await CM.underlay.fromFile(file);
+      let img = await CM.underlay.fromFile(file);
+      // foto del foglio: propongo di raddrizzarla (i PDF sono gi\u00e0 dritti)
+      if (!/pdf/i.test(file.type || '') && !/\.pdf$/i.test(file.name || '')) img = await straightenDialog(img);
       editor.mutate(pl => { pl.underlay = CM.underlay.create(img, pl); }, 'underlay');
       editor.fit();
       sheetMode = null;
@@ -632,6 +676,40 @@
     } catch (e) {
       U.toast(String(e.message) === 'PDF' ? 'I PDF si aprono nell’app sul telefono' : 'Non riesco ad aprire questo file');
     }
+  }
+
+  // Raddrizza una foto storta: 4 angoli da trascinare sugli angoli del foglio
+  async function straightenDialog(img) {
+    let corners;
+    try { corners = await CM.underlay.guessCorners(img.src); } catch (e) { return img; }
+    const full = corners.every((c, i) => (i === 0 && c.x === 0 && c.y === 0) || (i === 1 && c.y === 0 && c.x === img.pxW) || (i === 2 && c.x === img.pxW && c.y === img.pxH) || (i === 3 && c.x === 0 && c.y === img.pxH));
+    const wrap = el('div', { class: 'warp-box' });
+    const im = el('img', { src: img.src, alt: 'Planimetria', draggable: 'false' });
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    svg.appendChild(poly); wrap.append(im, svg);
+    const hs = corners.map((c, i) => { const h = el('div', { class: 'warp-h', 'aria-label': 'Angolo ' + (i + 1) }); wrap.appendChild(h); return h; });
+    const place = () => {
+      const r = wrap.getBoundingClientRect(); const k = r.width / img.pxW;
+      svg.setAttribute('viewBox', '0 0 ' + r.width + ' ' + r.height);
+      poly.setAttribute('points', corners.map(c => (c.x * k) + ',' + (c.y * k)).join(' '));
+      hs.forEach((h, i) => { h.style.left = (corners[i].x * k) + 'px'; h.style.top = (corners[i].y * k) + 'px'; });
+    };
+    hs.forEach((h, i) => {
+      h.addEventListener('pointerdown', e => { h.setPointerCapture(e.pointerId); e.preventDefault(); });
+      h.addEventListener('pointermove', e => {
+        if (!h.hasPointerCapture(e.pointerId)) return;
+        const r = wrap.getBoundingClientRect(); const k = r.width / img.pxW;
+        corners[i] = { x: Math.max(0, Math.min(img.pxW, (e.clientX - r.left) / k)), y: Math.max(0, Math.min(img.pxH, (e.clientY - r.top) / k)) };
+        place();
+      });
+    });
+    im.addEventListener('load', place);
+    setTimeout(place, 60);
+    const r = await U.dialog({ title: 'Raddrizza la foto', text: full ? 'Se hai fotografato il foglio di traverso, trascina i 4 pallini sugli angoli del foglio: lo raddrizzo. Se \u00e8 gi\u00e0 dritta, tocca \u201c\u00c8 dritta\u201d.' : 'Ho trovato i bordi del foglio: correggi i 4 pallini se serve e tocca \u201cRaddrizza\u201d.', body: wrap, actions: [{ label: '\u00c8 dritta', value: false }, { label: 'Raddrizza', value: true, primary: true }] });
+    if (!r) return img;
+    U.toast('Raddrizzo la foto\u2026');
+    try { return await CM.underlay.warp(img.src, corners); } catch (e) { console.error(e); return img; }
   }
 
   /* Calibrazione automatica: riconosco i muri, evidenzio il più lungo e chiedo solo la sua misura */
@@ -683,8 +761,24 @@
       title: 'Scegli un muro di cui sai la misura',
       text: 'Con le frecce passi da un muro all\u2019altro: quando \u00e8 evidenziato quello giusto, scrivi la sua lunghezza vera.',
       body, clear: true,
-      actions: [{ label: 'Uso la barra di scala', value: 'manual' }, { label: 'Conferma', value: () => input.value, primary: true }]
+      actions: (CM.ai.enabled() ? [{ label: 'Leggi le quote (AI)', value: 'quote' }] : []).concat([{ label: 'Uso la barra di scala', value: 'manual' }, { label: 'Conferma', value: () => input.value, primary: true }])
     });
+    if (r === 'quote') {
+      U.toast('Gemini legge le misure scritte sul disegno\u2026');
+      try {
+        const u = editor.plan.underlay;
+        const q = await CM.underlay.readDimensions(u);
+        if (!q) { U.toast('Non trovo quote leggibili: scrivi la misura di un muro'); return askCalibration(); }
+        const sg0 = editor.calibSeg();
+        const lenPx = CM.geom.dist(sg0.a, sg0.b) / (u.wM / u.pxW);
+        editor.applyCalibration(sg0.a, CM.geom.dist(sg0.a, sg0.b), lenPx * q.mPerPx);
+        buildTools();
+        U.toast('Scala presa da ' + q.count + ' quote su ' + q.total);
+        const segs = await CM.underlay.detectWalls(editor.plan.underlay).catch(() => []);
+        if (segs.length) await raiseWalls(segs, true);
+      } catch (e) { U.toast(CM.ai.errorText(e)); }
+      return;
+    }
     const sg = editor.calibSeg();
     if (r === 'other') { U.toast('Tocca il muro di cui conosci la misura'); return; }
     if (r === 'manual') { editor.calib = null; editor.setTool('calibrate'); buildTools(); U.toast('Trascina lungo la barra di scala (es. \u201c10 metri\u201d) o un tratto di cui sai la misura'); return; }
@@ -704,17 +798,21 @@
   async function raiseWalls(segs, scaled) {
     const ok = await U.confirmDialog(scaled ? 'Planimetria in scala' : 'Muri trovati', 'Ho trovato ' + segs.length + ' tratti di muro. Li alzo come muri esistenti (alti ' + CM.fmt.m(project.settings.wallH || 2.7) + ') e creo le stanze negli spazi chiusi? Puoi annullare in ogni momento.', 'Alza i muri');
     if (!ok) { sheetMode = 'underlay'; renderSheet(); return; }
-    let n = 0, r = 0;
+    let n = 0, r = 0, doors = 0;
     editor.mutate(pl => {
       n = CM.underlay.applyWalls(pl, segs, 'esistente');
       const h = project.settings.wallH || 2.7;
       for (const id in pl.walls) if (pl.walls[id].h == null || pl.walls[id].h === 2.7) pl.walls[id].h = h;
+      try { CM.autoTidy(pl); } catch (e) { console.error(e); }
+      try { doors = CM.plan.fillDoorGaps(pl); } catch (e) { console.error(e); }
+      try { CM.autoTidy(pl); } catch (e) { console.error(e); }
       try { r = CM.plan.autoRooms(pl); } catch (e) { console.error(e); }
+      try { CM.autoTidy(pl); } catch (e) { console.error(e); }
     }, 'detect');
     sheetMode = null; editor.select({}); buildTools(); renderSheet(); updateSummary();
     editor.fit();
     const go = await U.dialog({
-      title: n + ' muri e ' + r + ' stanze',
+      title: n + ' muri, ' + r + ' stanze' + (doors ? ', ' + doors + ' porte' : ''),
       text: 'Ora la casa \u00e8 in pianta e nel 3D. Per lavorarci: tocca un muro per cambiarne lunghezza e spessore o per segnarlo \u201cda demolire\u201d (giallo) o \u201cnuovo\u201d (rosso); con Muro disegni le pareti nuove; tocca una stanza per darle nome e tipo. Se un muro \u00e8 sbagliato lo selezioni ed Elimina, o usi Cancella zona.',
       actions: [{ label: 'Resta in pianta', value: false }, { label: 'Guarda in 3D', value: true, primary: true }]
     });
@@ -835,7 +933,20 @@
         seg([['prima', 'Prima'], ['dopo', 'Dopo']], view3d.phase, v => { view3d.phase = v; view3d.build(project); render(); }),
         el('button', { class: 'chip small' + (view3d.lowWalls ? ' active' : ''), text: 'Muri bassi', onclick: () => { view3d.lowWalls = !view3d.lowWalls; view3d.build(project); render(); } }),
         el('button', { class: 'chip small', html: U.icon('sun', 16) + '<span>Sole</span>', onclick: () => $('sunPanel').classList.toggle('hidden') }),
+        el('button', { class: 'chip small accent', html: U.icon('spark', 16) + '<span>Stili</span>', onclick: () => CM.personal.styleGallery(persCtx()) }),
+        el('button', { class: 'chip small', text: 'Ispirazione', onclick: () => CM.inspire && CM.inspire.open(persCtx()) }),
+        seg([['leggero', 'Leggero'], ['realistico', 'Realistico']], view3d.quality, v => { view3d.setQuality(v); render(); U.toast(v === 'realistico' ? 'Qualit\u00e0 realistica: pi\u00f9 bella, consuma di pi\u00f9' : 'Qualit\u00e0 leggera: fluida e risparmia batteria'); }),
         el('button', { class: 'chip small', text: 'Foto', onclick: () => CM.share.file('vista-3d.jpg', 'image/jpeg', view3d.snapshot(), true) }),
+        el('button', { class: 'chip small', text: 'Esporta 3D', onclick: () => {
+          const low = view3d.lowWalls; if (low) { view3d.lowWalls = false; view3d.build(project); }
+          try {
+            const b = view3d.exportGLB();
+            let bin = ''; for (let i = 0; i < b.length; i += 8192) bin += String.fromCharCode.apply(null, b.subarray(i, i + 8192));
+            CM.share.file(project.name.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-') + '-3D.glb', 'model/gltf-binary', 'data:model/gltf-binary;base64,' + btoa(bin), true);
+            U.toast('File 3D pronto: si apre al PC con \u201cVisualizzatore 3D\u201d di Windows o Blender');
+          } catch (e) { console.error(e); U.toast('Esportazione 3D non riuscita'); }
+          if (low) { view3d.lowWalls = true; view3d.build(project); }
+        } }),
         el('button', { class: 'chip small', text: 'Render AI', onclick: () => CM.share.render(project) }),
         el('button', { class: 'chip small', text: 'Inquadra', onclick: () => { view3d.resetCamera(); } })
       );
@@ -873,9 +984,27 @@
     void wrap;
   }
 
+  // Contesto per la personalizzazione (3D, stili, ispirazione)
+  function persCtx(room) {
+    return {
+      project, room: room || null,
+      plan: () => editor.plan,
+      mutate: (fn) => editor.mutate(fn, 'style'),
+      after: () => { if (view3d && tab === '3d') view3d.build(project); updateSummary(); },
+      openRoom: (rid) => { $('v3dPanel').classList.add('hidden'); focusSel({ type: 'room', id: rid }); }
+    };
+  }
+
   function open3d() {
     if (!view3d) {
-      view3d = new CM.View3D($('view3d'));
+      view3d = new CM.View3D($('view3d'), {
+        onPick: (hit) => {
+          $('v3dTip').classList.add('hidden');
+          if (!hit) { $('v3dPanel').classList.add('hidden'); return; }
+          view3d.flash(hit);
+          CM.personal.panel3d($('v3dPanel'), hit, persCtx());
+        }
+      });
       if (!view3d.init()) { U.toast('La vista 3D non è disponibile su questo dispositivo'); view3d = null; return; }
       build3dUi();
       new ResizeObserver(() => view3d && view3d.resize()).observe($('view3d'));
@@ -894,7 +1023,9 @@
       { id: 'variants', label: 'Varianti', icon: 'copy', right: project.variants.length > 1 ? String(project.variants.length) : '' },
       { id: 'assistant', label: 'Assistente', icon: 'spark' },
       { id: 'share', label: 'Condividi con altre persone', icon: 'share' },
-      { id: 'pdf', label: 'Esporta PDF', icon: 'opening' },
+      CM.clipboard ? { id: 'paste', label: 'Incolla gli elementi copiati', icon: 'copy' } : null,
+      { id: 'tavole', label: 'Tavole in scala (PDF per geometra e ditte)', icon: 'ruler' },
+      { id: 'pdf', label: 'Esporta PDF riepilogo', icon: 'opening' },
       { id: 'img', label: 'Immagine della pianta', icon: 'image' },
       { id: 'file', label: 'Esporta il file del progetto', icon: 'opening' },
       { id: 'history', label: 'Storico versioni', icon: 'history' },
@@ -923,6 +1054,15 @@
         return U.toast(r ? r + ' stanze create: toccale per dare nome e tipo' : 'Nessuno spazio chiuso nuovo: chiudi i muri o disegna la stanza');
       }
       case 'share': return CM.share.shareDialog(project);
+      case 'tavole': return CM.tavole.dialog(project, editor.plan);
+      case 'paste': {
+        const c = CM.clipboard; if (!c) return;
+        const bb = P.setBounds(c.plan, c.set), cur = P.bounds(Object.assign({}, editor.plan, { underlay: null }));
+        const dx = cur && bb ? cur.maxX + 0.5 - bb.x0 : 0, dy = cur && bb ? cur.minY - bb.y0 : 0;
+        let out; editor.mutate(pl => { out = P.copySet(c.plan, pl, c.set, dx, dy); }, 'paste');
+        editor.setTool('multi'); editor.setMulti(out); buildTools(); renderSheet(); editor.fit();
+        return U.toast('Incollato: trascina il riquadro blu dove vuoi');
+      }
       case 'pdf': return CM.share.pdf(project);
       case 'img': return CM.share.file('pianta-' + project.name.replace(/\W+/g, '-') + '.png', 'image/png', CM.share.planImage(project), true);
       case 'file': return CM.share.exportProject(project);
@@ -1023,6 +1163,7 @@
     if (!project) return;
     project.updated = Date.now();
     if (!S.saveProject(project)) U.toast('Salvataggio non riuscito: memoria piena?');
+    CM.share.driveBackup(false);
   }
 
   /* ---------- Aggiornamento dell'app ---------- */
@@ -1101,6 +1242,7 @@
     reload: reloadProject,
     setVariant,
     focus: focusSel,
+    straighten: (img) => straightenDialog(img),
     placeItem: (it) => { setTab('pianta'); sheetMode = null; editor.setPendingItem(it); buildTools(); renderSheet(); },
     snapshot3d: (needOpen) => {
       if (view3d && view3d.ready && view3d.project === project) return view3d.snapshot();
@@ -1108,7 +1250,7 @@
       return null;
     }
   };
-  CM._debug = { editor: () => editor, project: () => project };
+  CM._debug = { editor: () => editor, project: () => project, v3d: () => view3d };
 
   /* ================= AVVIO ================= */
   function init() {
@@ -1139,6 +1281,8 @@
       onCalibPick: () => askCalibration(),
       onCrop,
       onErase,
+      onMeasure: (d, final) => { $('hintText').textContent = 'Distanza: ' + CM.fmt.m(d) + (final ? ' \u00b7 trascina di nuovo per un\u2019altra misura' : ''); },
+      onMulti: () => renderSheet(),
       onPin: (ids) => CM.tabs.showDiary(ids)
     });
 
@@ -1148,7 +1292,8 @@
     $('homeMenu').addEventListener('click', async () => {
       const c = await U.menu('Casa Mia', [
         { id: 'open', label: 'Apri un file di progetto o backup', icon: 'opening' },
-        { id: 'backup', label: 'Backup su Drive', icon: 'share' },
+        { id: 'drive', label: 'Backup automatico su Google Drive', icon: 'share', right: CM.share.driveLinked() ? 'attivo' : '' },
+        { id: 'backup', label: 'Salva una copia adesso', icon: 'share' },
         { id: 'autobackup', label: 'Backup automatico settimanale', icon: 'history', toggle: S.pref('backupAuto') !== false },
         { id: 'ai', label: 'Assistente Gemini', icon: 'spark', right: CM.ai.enabled() ? 'attivo' : '' },
         { id: 'prices', label: 'Prezzi di riferimento', icon: 'euro' },
@@ -1158,6 +1303,13 @@
       ]);
       if (c === 'open') { openProjectFile(); }
       if (c === 'backup') CM.share.backupAll();
+      if (c === 'drive') {
+        if (CM.share.driveLinked()) {
+          const r = await U.dialog({ title: 'Backup su Drive attivo', text: 'Ogni modifica aggiorna il file di backup su Drive.', actions: [{ label: 'Scollega', value: 'off' }, { label: 'Aggiorna ora', value: 'now' }, { label: 'OK', value: null, primary: true }] });
+          if (r === 'off') { window.CasaMiaAndroid.unlinkBackup(); U.toast('Backup su Drive scollegato'); }
+          if (r === 'now') { CM.share.driveBackup(true); U.toast('Backup aggiornato'); }
+        } else CM.share.linkDrive();
+      }
       if (c === 'autobackup') {
         const on = S.pref('backupAuto') === false;
         S.pref('backupAuto', on);
@@ -1210,7 +1362,7 @@
     document.addEventListener('focusout', () => setTimeout(kbCheck, 120));
     document.addEventListener('focusin', () => setTimeout(kbCheck, 350));
     window.addEventListener('orientationchange', () => { maxH = 0; setTimeout(() => { maxH = window.innerHeight; kbCheck(); }, 400); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); else if (view3d && tab === '3d') view3d.dirty = true; });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { saveNow(); CM.share.driveBackup(true); } else if (view3d && tab === '3d') view3d.dirty = true; });
 
     const errs = CM.selfTest();
     if (errs.length) console.error('CASAMIA_SELFTEST_FAIL ' + errs.join('; '));

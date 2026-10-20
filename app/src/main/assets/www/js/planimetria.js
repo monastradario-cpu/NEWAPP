@@ -12,6 +12,25 @@
     return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
   }
 
+  // Omografia che porta i punti src nei punti dst (4 coppie) — sistema 8×8
+  function homography(src, dst) {
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = src[i], [X, Y] = dst[i];
+      A.push([x, y, 1, 0, 0, 0, -x * X, -y * X]); b.push(X);
+      A.push([0, 0, 0, x, y, 1, -x * Y, -y * Y]); b.push(Y);
+    }
+    // eliminazione di Gauss
+    for (let i = 0; i < 8; i++) {
+      let p = i; for (let r = i + 1; r < 8; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+      [A[i], A[p]] = [A[p], A[i]]; [b[i], b[p]] = [b[p], b[i]];
+      for (let r = i + 1; r < 8; r++) { const f = A[r][i] / A[i][i]; for (let c = i; c < 8; c++) A[r][c] -= f * A[i][c]; b[r] -= f * b[i]; }
+    }
+    const h = new Array(8).fill(0);
+    for (let i = 7; i >= 0; i--) { let s = b[i]; for (let c = i + 1; c < 8; c++) s -= A[i][c] * h[c]; h[i] = s / A[i][i]; }
+    return h;
+  }
+
   const U = CM.underlay = {
     // Restituisce un dataURL JPEG ridimensionato dall'immagine o dal PDF scelto
     async fromFile(file) {
@@ -244,6 +263,109 @@
         'Coordinate in pixel dell’immagine, origine in alto a sinistra. Muri come segmenti sull’asse del muro. ' +
         'Se nella planimetria ci sono quote o misure scritte, usale per stimare scala_m_per_px.';
       return CM.ai.text(prompt, { images: [u.src], json: true });
+    },
+
+    /* ---------- Foto storta: raddrizza dai 4 angoli del foglio ---------- */
+    // corners: 4 punti in pixel dell'immagine (alto-sx, alto-dx, basso-dx, basso-sx)
+    async warp(src, corners) {
+      const im = await loadImg(src);
+      const [a, b, c, d] = corners;
+      const wTop = Math.hypot(b.x - a.x, b.y - a.y), wBot = Math.hypot(c.x - d.x, c.y - d.y);
+      const hL = Math.hypot(d.x - a.x, d.y - a.y), hR = Math.hypot(c.x - b.x, c.y - b.y);
+      let W = Math.max(wTop, wBot), H = Math.max(hL, hR);
+      const k = Math.min(1, MAX_PX / Math.max(W, H)); W = Math.round(W * k); H = Math.round(H * k);
+      // omografia dal rettangolo d'uscita al quadrilatero (mappatura inversa)
+      const Hm = homography([[0, 0], [W, 0], [W, H], [0, H]], corners.map(p => [p.x, p.y]));
+      const sc = document.createElement('canvas'); sc.width = im.naturalWidth; sc.height = im.naturalHeight;
+      const sx = sc.getContext('2d'); sx.drawImage(im, 0, 0);
+      const sd = sx.getImageData(0, 0, sc.width, sc.height).data;
+      const oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+      const ox = oc.getContext('2d'); const od = ox.createImageData(W, H);
+      const SW = sc.width, SH = sc.height;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const z = Hm[6] * x + Hm[7] * y + 1;
+        const u = (Hm[0] * x + Hm[1] * y + Hm[2]) / z, v = (Hm[3] * x + Hm[4] * y + Hm[5]) / z;
+        const i = (y * W + x) * 4;
+        const xi = Math.round(u), yi = Math.round(v);
+        if (xi < 0 || yi < 0 || xi >= SW || yi >= SH) { od.data[i] = od.data[i + 1] = od.data[i + 2] = 255; od.data[i + 3] = 255; continue; }
+        const j = (yi * SW + xi) * 4;
+        od.data[i] = sd[j]; od.data[i + 1] = sd[j + 1]; od.data[i + 2] = sd[j + 2]; od.data[i + 3] = 255;
+      }
+      ox.putImageData(od, 0, 0);
+      return { src: oc.toDataURL('image/jpeg', 0.88), pxW: W, pxH: H };
+    },
+
+    // Trova da solo i 4 angoli del foglio (il quadrilatero chiaro più grande); se non riesce, i bordi dell'immagine
+    async guessCorners(src) {
+      const im = await loadImg(src);
+      const n = 220, k = n / Math.max(im.naturalWidth, im.naturalHeight);
+      const W = Math.round(im.naturalWidth * k), H = Math.round(im.naturalHeight * k);
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d'); x.drawImage(im, 0, 0, W, H);
+      const d = x.getImageData(0, 0, W, H).data;
+      let sum = 0; const g = new Float32Array(W * H);
+      for (let i = 0; i < W * H; i++) { g[i] = d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11; sum += g[i]; }
+      const thr = sum / (W * H);
+      // il foglio è la zona chiara: per ogni angolo prendo il punto chiaro che lo massimizza
+      const best = [[-1, 0, 0], [-1, 0, 0], [-1, 0, 0], [-1, 0, 0]];
+      const score = [(px, py) => -px - py, (px, py) => px - py, (px, py) => px + py, (px, py) => -px + py];
+      for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+        if (g[py * W + px] < thr * 1.05) continue;
+        for (let q = 0; q < 4; q++) { const s2 = score[q](px, py); if (best[q][0] === -1 || s2 > best[q][0]) best[q] = [s2, px, py]; }
+      }
+      const out = best.map(b => ({ x: b[1] / k, y: b[2] / k }));
+      const area = Math.abs((out[1].x - out[0].x) * (out[3].y - out[0].y));
+      if (best.some(b => b[0] === -1) || area < im.naturalWidth * im.naturalHeight * 0.25) return [{ x: 0, y: 0 }, { x: im.naturalWidth, y: 0 }, { x: im.naturalWidth, y: im.naturalHeight }, { x: 0, y: im.naturalHeight }];
+      return out;
+    },
+
+    /* ---------- Pulizia: tengo i muri, tolgo scritte, frecce, simboli ---------- */
+    async clean(u) {
+      const im = await loadImg(u.src);
+      const W = u.pxW, H = u.pxH;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.drawImage(im, 0, 0, W, H);
+      const d = x.getImageData(0, 0, W, H);
+      const dark = new Uint8Array(W * H);
+      for (let i = 0; i < W * H; i++) dark[i] = (d.data[i * 4] * 0.3 + d.data[i * 4 + 1] * 0.59 + d.data[i * 4 + 2] * 0.11) < 150 ? 1 : 0;
+      const minDim = Math.max(W, H) * 0.035;
+      const lab = new Int32Array(W * H); let id = 0; const keep = [0];
+      const st = [];
+      for (let i0 = 0; i0 < W * H; i0++) {
+        if (!dark[i0] || lab[i0]) continue;
+        id++; st.push(i0); lab[i0] = id;
+        let x0 = W, x1 = 0, y0 = H, y1 = 0, n = 0;
+        while (st.length) {
+          const i = st.pop(); const px = i % W, py = (i / W) | 0; n++;
+          if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py;
+          for (const j of [px > 0 ? i - 1 : -1, px < W - 1 ? i + 1 : -1, i - W, i + W]) if (j >= 0 && j < W * H && dark[j] && !lab[j]) { lab[j] = id; st.push(j); }
+        }
+        keep.push(Math.max(x1 - x0, y1 - y0) >= minDim && n > minDim * 2 ? 1 : 0);
+      }
+      for (let i = 0; i < W * H; i++) {
+        const k = dark[i] && keep[lab[i]];
+        const v = k ? 30 : 255;
+        d.data[i * 4] = d.data[i * 4 + 1] = d.data[i * 4 + 2] = v;
+      }
+      x.putImageData(d, 0, 0);
+      return Object.assign({}, u, { src: c.toDataURL('image/png'), cleaned: true });
+    },
+
+    /* ---------- Quote scritte sul disegno (con Gemini): ricava la scala ---------- */
+    async readDimensions(u) {
+      const prompt = 'Questa è una planimetria larga ' + u.pxW + ' px e alta ' + u.pxH + ' px. Trova le QUOTE scritte (numeri di misura, in metri o centimetri) e per ciascuna il tratto che misurano. ' +
+        'Rispondi SOLO JSON: {"quote": [{"valore_m": numero in metri, "x1": px, "y1": px, "x2": px, "y2": px}]}. Se non ci sono quote leggibili restituisci {"quote": []}.';
+      const res = await CM.ai.text(prompt, { images: [u.src], json: true });
+      const ks = [];
+      for (const q of res.quote || []) {
+        const L = Math.hypot(q.x2 - q.x1, q.y2 - q.y1);
+        if (q.valore_m > 0.3 && L > 20) ks.push(q.valore_m / L);
+      }
+      if (!ks.length) return null;
+      ks.sort((a, b) => a - b);
+      const med = ks[Math.floor(ks.length / 2)];
+      const good = ks.filter(k => Math.abs(k - med) / med < 0.08);
+      return { mPerPx: good.reduce((a, b) => a + b, 0) / good.length, count: good.length, total: ks.length };
     },
 
     applyAI(plan, u, res) {

@@ -751,11 +751,195 @@
       const onBorder = Math.min(...bx) - b.minX < edge || b.maxX - Math.max(...bx) < edge || Math.min(...by) - b.minY < edge || b.maxY - Math.max(...by) < edge;
       const balcony = onBorder && Math.min(rw, rh) < 2.0 && Math.max(rw, rh) >= 3 * Math.min(rw, rh) && Math.max(rw, rh) >= 2.5;
       made++;
-      const nodes = pts.map(p => P.getOrCreateNode(plan, p.x, p.y));
+      const nodes = pts.map(p => P.nodeAt(plan, p.x, p.y, 0.07) || P.getOrCreateNode(plan, p.x, p.y));
       if (!balcony) named++;
       P.addRoom(plan, nodes, balcony ? { type: 'balcone' } : { name: 'Stanza ' + named });
     }
     return made;
+  };
+
+  /* ---------- Gruppi di elementi: selezione multipla, sposta, duplica ---------- */
+  P.collectArea = function (plan, r) {
+    const inside = (p) => p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1;
+    const set = { nodes: [], walls: [], rooms: [], furniture: [], fixtures: [], columns: [], beams: [] };
+    for (const id in plan.nodes) if (inside(plan.nodes[id])) set.nodes.push(id);
+    const ns = new Set(set.nodes);
+    for (const id in plan.walls) if (ns.has(plan.walls[id].a) && ns.has(plan.walls[id].b)) set.walls.push(id);
+    for (const id in plan.rooms) if (plan.rooms[id].nodes.every(n => ns.has(n))) set.rooms.push(id);
+    for (const id in plan.furniture) if (inside(plan.furniture[id])) set.furniture.push(id);
+    for (const id in plan.fixtures) if (inside(plan.fixtures[id])) set.fixtures.push(id);
+    for (const id in plan.columns) if (inside(plan.columns[id])) set.columns.push(id);
+    for (const id in plan.beams) { const b = plan.beams[id]; if (inside({ x: b.x1, y: b.y1 }) && inside({ x: b.x2, y: b.y2 })) set.beams.push(id); }
+    return set;
+  };
+  P.setCount = (set) => set ? set.walls.length + set.rooms.length + set.furniture.length + set.fixtures.length + set.columns.length + set.beams.length : 0;
+  P.setBounds = function (plan, set) {
+    const pts = [];
+    set.nodes.forEach(id => plan.nodes[id] && pts.push(plan.nodes[id]));
+    set.furniture.forEach(id => plan.furniture[id] && pts.push(...P.furnitureCorners(plan.furniture[id])));
+    set.fixtures.forEach(id => plan.fixtures[id] && pts.push(plan.fixtures[id]));
+    set.columns.forEach(id => plan.columns[id] && pts.push(plan.columns[id]));
+    set.beams.forEach(id => { const b = plan.beams[id]; if (b) pts.push({ x: b.x1, y: b.y1 }, { x: b.x2, y: b.y2 }); });
+    if (!pts.length) return null;
+    return { x0: Math.min(...pts.map(p => p.x)), y0: Math.min(...pts.map(p => p.y)), x1: Math.max(...pts.map(p => p.x)), y1: Math.max(...pts.map(p => p.y)) };
+  };
+  P.translateSet = function (plan, set, dx, dy) {
+    // i nodi dei muri selezionati (anche se un capo \u00e8 fuori: il muro si allunga)
+    set.nodes.forEach(id => { const n = plan.nodes[id]; if (n) { n.x = r3(n.x + dx); n.y = r3(n.y + dy); } });
+    const mv = (o) => { if (o) { o.x = r3(o.x + dx); o.y = r3(o.y + dy); } };
+    set.furniture.forEach(id => mv(plan.furniture[id]));
+    set.fixtures.forEach(id => mv(plan.fixtures[id]));
+    set.columns.forEach(id => mv(plan.columns[id]));
+    set.beams.forEach(id => { const b = plan.beams[id]; if (b) { b.x1 = r3(b.x1 + dx); b.y1 = r3(b.y1 + dy); b.x2 = r3(b.x2 + dx); b.y2 = r3(b.y2 + dy); } });
+  };
+  // Copia gli elementi (anche da un altro progetto/variante: src pu\u00f2 essere un'altra pianta) spostati di dx, dy
+  P.copySet = function (src, dst, set, dx, dy) {
+    const map = {};
+    const out = { nodes: [], walls: [], rooms: [], furniture: [], fixtures: [], columns: [], beams: [] };
+    const node = (id) => {
+      if (map[id]) return map[id];
+      const n = src.nodes[id];
+      const nid = P.getOrCreateNode(dst, r3(n.x + dx), r3(n.y + dy));
+      map[id] = nid; out.nodes.push(nid);
+      return nid;
+    };
+    set.walls.forEach(id => {
+      const w = src.walls[id]; if (!w) return;
+      const ids = P.addWall(dst, node(w.a), node(w.b), { t: w.t, h: w.h, state: w.state });
+      out.walls.push(...ids);
+      for (const oid in src.openings) {
+        const o = src.openings[oid];
+        if (o.wall !== id || !ids.length) continue;
+        const nid = CM.uid('o'); dst.openings[nid] = Object.assign(CM.clone(o), { wall: ids[0] }); P.clampOpening(dst, nid);
+      }
+    });
+    set.rooms.forEach(id => { const r = src.rooms[id]; if (!r) return; const rid = CM.uid('r'); dst.rooms[rid] = Object.assign(CM.clone(r), { nodes: r.nodes.map(node) }); out.rooms.push(rid); });
+    const cp = (coll, pre) => set[coll].forEach(id => { const o = src[coll][id]; if (!o) return; const nid = CM.uid(pre); dst[coll][nid] = Object.assign(CM.clone(o), { x: r3(o.x + dx), y: r3(o.y + dy) }); out[coll].push(nid); });
+    cp('furniture', 'f'); cp('fixtures', 'i'); cp('columns', 'c');
+    set.beams.forEach(id => { const b = src.beams[id]; if (!b) return; const nid = CM.uid('b'); dst.beams[nid] = Object.assign(CM.clone(b), { x1: r3(b.x1 + dx), y1: r3(b.y1 + dy), x2: r3(b.x2 + dx), y2: r3(b.y2 + dy) }); out.beams.push(nid); });
+    P.tidy(dst);
+    return out;
+  };
+  P.deleteSet = function (plan, set) {
+    set.rooms.forEach(id => delete plan.rooms[id]);
+    set.walls.forEach(id => delete plan.walls[id]);
+    set.furniture.forEach(id => delete plan.furniture[id]);
+    set.fixtures.forEach(id => delete plan.fixtures[id]);
+    set.columns.forEach(id => delete plan.columns[id]);
+    set.beams.forEach(id => delete plan.beams[id]);
+    P.tidy(plan);
+  };
+  // Ruota un muro intorno al suo primo estremo all'angolo dato (gradi, 0 = verso destra, senso orario sullo schermo)
+  P.setWallAngle = function (plan, wid, deg) {
+    const w = plan.walls[wid]; if (!w) return false;
+    const A = plan.nodes[w.a], B = plan.nodes[w.b];
+    const L = G.dist(A, B), a = deg * Math.PI / 180;
+    B.x = r3(A.x + Math.cos(a) * L); B.y = r3(A.y + Math.sin(a) * L);
+    P.tidy(plan);
+    return true;
+  };
+  // Muro ad arco: sostituisce il muro con tanti tratti lungo un arco con la freccia data (m, + verso un lato)
+  P.curveWall = function (plan, wid, sag, segs) {
+    const w = plan.walls[wid]; if (!w || Math.abs(sag) < 0.01) return false;
+    segs = segs || Math.max(6, Math.min(16, Math.round(G.dist(plan.nodes[w.a], plan.nodes[w.b]) / 0.35)));
+    const A = plan.nodes[w.a], B = plan.nodes[w.b];
+    const L = G.dist(A, B), c = L / 2;
+    const R = (c * c + sag * sag) / (2 * Math.abs(sag));
+    const u = { x: (B.x - A.x) / L, y: (B.y - A.y) / L }, n = { x: -u.y, y: u.x };
+    const sgn = Math.sign(sag);
+    const M = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+    const C = { x: M.x - n.x * sgn * (R - Math.abs(sag)), y: M.y - n.y * sgn * (R - Math.abs(sag)) };
+    const a0 = Math.atan2(A.y - C.y, A.x - C.x), a1 = Math.atan2(B.y - C.y, B.x - C.x);
+    let da = a1 - a0; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+    // il verso giusto \u00e8 quello che passa dal punto di freccia
+    const mid = { x: M.x + n.x * sag, y: M.y + n.y * sag };
+    const am = Math.atan2(mid.y - C.y, mid.x - C.x);
+    const test = (d) => { let x = am - a0; while (x > Math.PI) x -= 2 * Math.PI; while (x < -Math.PI) x += 2 * Math.PI; return Math.sign(x) === Math.sign(d); };
+    if (!test(da)) da = da > 0 ? da - 2 * Math.PI : da + 2 * Math.PI;
+    const props = { t: w.t, h: w.h, state: w.state };
+    delete plan.walls[wid];
+    for (const oid in plan.openings) if (plan.openings[oid].wall === wid) delete plan.openings[oid];
+    let prev = w.a;
+    const inner = [];
+    for (let i = 1; i <= segs; i++) {
+      const nid = i === segs ? w.b : P.addNode(plan, C.x + Math.cos(a0 + da * i / segs) * R, C.y + Math.sin(a0 + da * i / segs) * R);
+      if (i < segs) inner.push(nid);
+      P.addWall(plan, prev, nid, props);
+      prev = nid;
+    }
+    // le stanze che usavano il muro seguono la curva
+    for (const rid in plan.rooms) {
+      const r = plan.rooms[rid];
+      for (let i = 0; i < r.nodes.length; i++) {
+        const a = r.nodes[i], b = r.nodes[(i + 1) % r.nodes.length];
+        if ((a === w.a && b === w.b) || (a === w.b && b === w.a)) {
+          r.nodes.splice(i + 1, 0, ...(a === w.a ? inner : inner.slice().reverse()));
+          break;
+        }
+      }
+    }
+    P.tidy(plan);
+    return true;
+  };
+
+  // Vani porta lasciati aperti dai muri riconosciuti: li chiudo con una porta (cos\u00ec anche le stanze si chiudono)
+  P.fillDoorGaps = function (plan) {
+    const deg = {}, dirs = {};
+    for (const id in plan.walls) {
+      const w = plan.walls[id], A = plan.nodes[w.a], B = plan.nodes[w.b];
+      const L = G.dist(A, B); if (L < 1e-6) continue;
+      deg[w.a] = (deg[w.a] || 0) + 1; deg[w.b] = (deg[w.b] || 0) + 1;
+      dirs[w.a] = { x: (A.x - B.x) / L, y: (A.y - B.y) / L, w: id };
+      dirs[w.b] = { x: (B.x - A.x) / L, y: (B.y - A.y) / L, w: id };
+    }
+    const free = Object.keys(deg).filter(n => deg[n] === 1);
+    const used = new Set();
+    let n = 0;
+    for (const na of free) {
+      if (used.has(na)) continue;
+      const A = plan.nodes[na], da = dirs[na];
+      let best = null, bd = Infinity;
+      // 1) un altro muro allineato che riprende dopo il vano
+      for (const nb of free) {
+        if (nb === na || used.has(nb)) continue;
+        const B = plan.nodes[nb], db = dirs[nb];
+        const d = G.dist(A, B);
+        if (d < 0.5 || d > 1.6) continue;
+        const ux = (B.x - A.x) / d, uy = (B.y - A.y) / d;
+        if (ux * da.x + uy * da.y < 0.97 || -(ux * db.x + uy * db.y) < 0.97) continue;
+        if (d < bd) { bd = d; best = { nb, d }; }
+      }
+      // 2) oppure un muro perpendicolare davanti
+      let hit = null;
+      if (!best) {
+        for (const id in plan.walls) {
+          if (id === da.w) continue;
+          const w = plan.walls[id], P1 = plan.nodes[w.a], P2 = plan.nodes[w.b];
+          // intersezione del raggio con il muro
+          const ex = P2.x - P1.x, ey = P2.y - P1.y;
+          const den = da.x * ey - da.y * ex; if (Math.abs(den) < 1e-6) continue;
+          const t = ((P1.x - A.x) * ey - (P1.y - A.y) * ex) / den, sP = ((P1.x - A.x) * da.y - (P1.y - A.y) * da.x) / den;
+          if (t < 0.5 || t > 1.6 || sP < 0.02 || sP > 0.98) continue;
+          if (!hit || t < hit.t) hit = { t, x: A.x + da.x * t, y: A.y + da.y * t };
+        }
+      }
+      if (!best && !hit) continue;
+      const wa = plan.walls[da.w];
+      const props = { t: wa.t, h: wa.h, state: wa.state };
+      let nb = best ? best.nb : P.getOrCreateNode(plan, Math.round(hit.x * 100) / 100, Math.round(hit.y * 100) / 100);
+      const gap = best ? best.d : hit.t;
+      const ids = P.addWall(plan, na, nb, props);
+      used.add(na); if (best) used.add(best.nb);
+      if (ids.length) {
+        const wid = ids[0];
+        const oid = P.addOpening(plan, wid, P.wallLen(plan, wid) / 2, 'battente');
+        plan.openings[oid].w = Math.round(Math.max(0.6, Math.min(1.2, gap - 0.04)) * 100) / 100;
+        P.clampOpening(plan, oid);
+        n++;
+      }
+    }
+    P.tidy(plan);
+    return n;
   };
 
   // Elimina tutto ciò che sta dentro un rettangolo (in metri). Ritorna quanti elementi ha tolto.

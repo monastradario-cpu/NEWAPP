@@ -27,6 +27,7 @@
     'Resa': 'Quanti m² copre un litro di pittura per una mano (scritto sulla latta, es. 10–12 m²/L).',
     'Misura reale': 'La lunghezza vera di quel tratto, presa col metro o dalla quota scritta sulla planimetria.',
     'Misura reale del muro blu': 'La lunghezza vera del muro evidenziato, presa col metro o dalla quota scritta sulla planimetria. Da questa ricavo la scala di tutto il disegno.',
+    'Angolo': 'Direzione del muro in gradi: 0 = verso destra, 90 = verso il basso, 180 = verso sinistra, 270 = verso l\u2019alto. Cambiandolo ruota il muro intorno al suo primo estremo.',
     'Tipo di ambiente': 'Serve per i controlli di legge (superfici minime, finestre), per il calcolo dei costi e per i suggerimenti d’arredo.'
   };
 
@@ -38,7 +39,9 @@
     const f = plan.furniture[id];
     if (!f) return false;
     const x0 = f.x, y0 = f.y, rot0 = f.rot || 0;
-    const ok = () => !(CM.checks.furniture(plan)[id] || []).length;
+    const bad = (ws) => (ws || []).filter(w => !/^Passaggio stretto/.test(w));
+    const before = bad(CM.checks.furniture(plan)[id]).length;
+    const ok = () => bad(CM.checks.furniture(plan)[id]).length === 0 || (before > 1 && bad(CM.checks.furniture(plan)[id]).length < before && false);
     const step = 0.05;
     for (let r = 1; r <= 50; r++) {
       for (let i = -r; i <= r; i++) {
@@ -55,6 +58,44 @@
     return false;
   }
 
+  // Finestra sul muro esterno pi\u00f9 lungo della stanza, grande quanto serve per 1/8 del pavimento
+  function addWindowFor(plan, rid) {
+    const r = plan.rooms[rid]; if (!r) return false;
+    const st = P.roomStats(plan, r);
+    let have = 0;
+    const walls = P.roomWalls(plan, r);
+    for (const oid in plan.openings) { const o = plan.openings[oid]; if (walls.includes(o.wall) && (o.kind === 'finestra' || o.kind === 'portafinestra')) have += o.w * o.h; }
+    const need = Math.max(0.36, st.net / 8 - have);
+    const ext = walls.filter(id => {
+      const w = plan.walls[id], A = plan.nodes[w.a], B = plan.nodes[w.b], L = G.dist(A, B);
+      const n = { x: -(B.y - A.y) / L, y: (B.x - A.x) / L }, m = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+      const o1 = P.roomOf(plan, { x: m.x + n.x * (w.t / 2 + 0.1), y: m.y + n.y * (w.t / 2 + 0.1) }), o2 = P.roomOf(plan, { x: m.x - n.x * (w.t / 2 + 0.1), y: m.y - n.y * (w.t / 2 + 0.1) });
+      return !o1 || !o2;
+    }).filter(id => !Object.values(plan.openings).some(o => o.wall === id && o.kind !== 'finestra'));
+    const cand = (ext.length ? ext : walls).slice().sort((a, b) => P.wallLen(plan, b) - P.wallLen(plan, a));
+    const wid = cand[0]; if (!wid) return false;
+    const L = P.wallLen(plan, wid);
+    const h = r.type === 'bagno' ? 0.8 : 1.4;
+    const wdt = Math.round(Math.max(0.6, Math.min(L - 0.4, need / h + 0.05)) * 20) / 20;
+    if (wdt < 0.4) return false;
+    const oid = P.addOpening(plan, wid, L / 2, 'finestra');
+    Object.assign(plan.openings[oid], { w: wdt, h, sill: r.type === 'bagno' ? 1.3 : 0.9, state: 'nuova' });
+    P.clampOpening(plan, oid);
+    return true;
+  }
+
+  // Dopo il riconoscimento: sistema da solo i piccoli difetti di disegno (muri cortissimi, angoli staccati, muri appena storti)
+  CM.autoTidy = function (plan) {
+    let n = 0;
+    const skip = new Set();
+    for (let k = 0; k < 400; k++) {
+      const w = CM.problems(plan, {}).find(x => x.fix && ['Elimina', 'Unisci', 'Raddrizza'].includes(x.fixLabel) && !skip.has(x.text + JSON.stringify(x.sel)));
+      if (!w) break;
+      if (w.fix(plan)) n++; else skip.add(w.text + JSON.stringify(w.sel));
+    }
+    return n;
+  };
+
   CM.problems = function (plan, warnings) {
     const out = [];
     // regole di legge sulle stanze
@@ -65,6 +106,9 @@
         const need = /240/.test(n.text) ? 2.4 : 2.7;
         it.fixLabel = 'Porta a ' + Math.round(need * 100) + ' cm';
         it.fix = (pl) => { if (pl.rooms[n.room]) { pl.rooms[n.room].h = need; return true; } return false; };
+      } else if (/finestr/.test(n.text) && room) {
+        it.fixLabel = 'Aggiungi finestra';
+        it.fix = (pl) => addWindowFor(pl, n.room);
       } else if (/camera doppia/.test(n.text) && room) {
         const st = P.roomStats(plan, room);
         if (st.net >= 9) { it.fixLabel = 'È una singola'; it.fix = (pl) => { if (pl.rooms[n.room]) { pl.rooms[n.room].type = 'cameretta'; return true; } return false; }; }

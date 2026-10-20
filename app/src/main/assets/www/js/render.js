@@ -368,6 +368,12 @@
         dimLabel(ctx, v, last, d.cursor, 16, CM.fmt.num(G.dist(last, d.cursor), 2), C.accent, true);
       }
     }
+    if (d.kind === 'selrect') {
+      const a = toS(v, d.a), b = toS(v, d.b);
+      const x = Math.min(a.x, b.x) - (d.done ? 8 : 0), y = Math.min(a.y, b.y) - (d.done ? 8 : 0), w = Math.abs(b.x - a.x) + (d.done ? 16 : 0), h = Math.abs(b.y - a.y) + (d.done ? 16 : 0);
+      ctx.fillStyle = 'rgba(31,79,209,0.08)'; ctx.fillRect(x, y, w, h);
+      ctx.setLineDash([7, 5]); ctx.strokeStyle = C.accent; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+    }
     if (d.kind === 'erase') {
       const a = toS(v, d.a), b = toS(v, d.b);
       const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);

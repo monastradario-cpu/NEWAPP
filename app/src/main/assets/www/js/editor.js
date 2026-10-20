@@ -21,6 +21,8 @@
     calibrate: 'Trascina lungo un muro di cui conosci la misura, poi inserisci la lunghezza vera',
     moveUnderlay: 'Trascina per spostare la planimetria sotto la pianta',
     cropUnderlay: 'Trascina un rettangolo intorno alla casa, lasciando fuori cornici, scritte e cartigli',
+    measure: 'Trascina da un punto all\u2019altro per misurare (si aggancia ad angoli e muri)',
+    multi: 'Trascina un rettangolo per selezionare pi\u00f9 elementi; poi trascina dentro il riquadro per spostarli',
     erase: 'Trascina un rettangolo sulla parte da togliere: muri, stanze e oggetti al suo interno verranno eliminati',
     calibPick: 'Tocca il muro di cui conosci la misura (quelli blu sono i muri riconosciuti)'
   };
@@ -113,6 +115,7 @@
       this.finishChain();
       this.tool = tool;
       if (tool !== 'calibPick') this.calib = null;
+      if (tool !== 'multi') this.multi = null;
       if (kind) this.openingKind = kind;
       this.draft = null;
       if (tool !== 'select') this.select({});
@@ -460,6 +463,13 @@
       if (this.tool === 'opening') this._previewOpening(world);
       if (this.tool === 'cropUnderlay') { this.draft = { kind: 'crop', a: world, b: world }; this.draw(); }
       if (this.tool === 'erase') { this.draft = { kind: 'erase', a: world, b: world }; this.draw(); }
+      if (this.tool === 'measure') { const sp = this.snapPoint(world, { walls: true }); this.draft = { kind: 'chain', points: [sp.p], cursor: sp.p, measure: true }; this.draw(); }
+      if (this.tool === 'multi') {
+        const bb = this.multi && P.setBounds(this.plan, this.multi);
+        const pad = 14 / this.view.s;
+        if (bb && world.x >= bb.x0 - pad && world.x <= bb.x1 + pad && world.y >= bb.y0 - pad && world.y <= bb.y1 + pad) { this.gesture.multiMove = { done: { x: 0, y: 0 } }; this.snapshot(); }
+        else { this.multi = null; this.draft = { kind: 'selrect', a: world, b: world }; this.draw(); }
+      }
       if (this.tool === 'calibrate') { this.gesture.anchor = world; this.draft = { kind: 'chain', points: [world], cursor: world }; this.draw(); }
       if (this.tool === 'moveUnderlay' && this.plan.underlay) { this.snapshot(); this.gesture.snapshotTaken = true; this.gesture.u0 = { x: this.plan.underlay.x, y: this.plan.underlay.y }; }
     }
@@ -510,7 +520,16 @@
         this._previewFurniture(world);
       } else if (this.tool === 'opening') {
         this._previewOpening(world);
-      } else if ((this.tool === 'cropUnderlay' || this.tool === 'erase') && this.draft) {
+      } else if (this.tool === 'measure' && this.draft) {
+        this.draft.cursor = this.snapPoint(world, { walls: true, from: this.draft.points[0] }).p; this.draw();
+        if (this.hooks.onMeasure) this.hooks.onMeasure(G.dist(this.draft.points[0], this.draft.cursor), false);
+      } else if (this.tool === 'multi' && g.multiMove) {
+        // sposto il gruppo a passi di 5 cm (o agganciato alla griglia)
+        const st = this.gridStep();
+        const dx = Math.round((world.x - g.startWorld.x) / st) * st, dy = Math.round((world.y - g.startWorld.y) / st) * st;
+        const ddx = dx - g.multiMove.done.x, ddy = dy - g.multiMove.done.y;
+        if (ddx || ddy) { P.translateSet(this.plan, this.multi, ddx, ddy); g.multiMove.done = { x: dx, y: dy }; this._drawMulti(); }
+      } else if ((this.tool === 'cropUnderlay' || this.tool === 'erase' || this.tool === 'multi') && this.draft) {
         this.draft.b = world; this.draw();
       } else if (this.tool === 'calibrate' && this.draft) {
         this.draft.cursor = world; this.draw();
@@ -553,6 +572,22 @@
         case 'calibrate': this._finishCalibrate(world); break;
         case 'moveUnderlay': if (g.u0) this.commit('underlay'); break;
         case 'calibPick': this._pickCalib(pos); break;
+        case 'measure': {
+          const d = this.draft;
+          if (d && this.hooks.onMeasure) this.hooks.onMeasure(G.dist(d.points[0], d.cursor), true);
+          break;
+        }
+        case 'multi': {
+          if (g.multiMove) { P.tidy(this.plan); this.commit('move'); this._drawMulti(); if (this.hooks.onMulti) this.hooks.onMulti(this.multi); break; }
+          const d = this.draft;
+          if (!d) break;
+          const r = { x0: Math.min(d.a.x, d.b.x), y0: Math.min(d.a.y, d.b.y), x1: Math.max(d.a.x, d.b.x), y1: Math.max(d.a.y, d.b.y) };
+          const set = P.collectArea(this.plan, r);
+          this.multi = P.setCount(set) ? set : null;
+          this._drawMulti();
+          if (this.hooks.onMulti) this.hooks.onMulti(this.multi);
+          break;
+        }
         case 'erase': {
           const d = this.draft; this.draft = null; this.draw();
           if (d && this.hooks.onErase) this.hooks.onErase({ x0: Math.min(d.a.x, d.b.x), y0: Math.min(d.a.y, d.b.y), x1: Math.max(d.a.x, d.b.x), y1: Math.max(d.a.y, d.b.y) });
@@ -929,6 +964,14 @@
       this.draft = { kind: 'calib', segs: this.calib.segs, idx: this.calib.idx };
       this.draw();
     }
+    // Riquadro della selezione multipla
+    _drawMulti() {
+      const bb = this.multi && P.setBounds(this.plan, this.multi);
+      this.draft = bb ? { kind: 'selrect', a: { x: bb.x0, y: bb.y0 }, b: { x: bb.x1, y: bb.y1 }, done: true } : null;
+      this.draw();
+    }
+    setMulti(set) { this.multi = set && P.setCount(set) ? set : null; this._drawMulti(); }
+
     calibSeg() { return this.calib ? this.calib.segs[this.calib.idx] : null; }
     // Frecce: passa al muro precedente o successivo senza doverlo toccare
     stepCalib(d) {

@@ -52,10 +52,11 @@
     fields.appendChild(U().numField('Profondità', f.d, 'cm', v => mut(pl => { pl.furniture[id].d = v; }), { min: 0.01, max: 20 }));
     fields.appendChild(U().numField('Altezza', f.h, 'cm', v => mut(pl => { pl.furniture[id].h = v; }), { min: 0.01, max: 8 }));
     fields.appendChild(U().numField('Da terra', f.elev || 0, 'cm', v => mut(pl => { pl.furniture[id].elev = v; }), { min: 0, max: 5 }));
-    fields.appendChild(colorField('Colore', f.color, v => mut(pl => { pl.furniture[id].color = v; })));
     fields.appendChild(moneyField('Prezzo', f.price, v => mut(pl => { pl.furniture[id].price = v; })));
     fields.appendChild(U().textField('Negozio', f.store || '', v => mut(pl => { pl.furniture[id].store = v; }), { full: false }));
     sheet.appendChild(fields);
+    sheet.appendChild(el('div', { class: 'sec-title', text: 'Personalizza' }));
+    sheet.appendChild(CM.personal.furnitureControls(f, fn => mut(pl => { if (pl.furniture[id]) fn(pl.furniture[id]); })));
     const acts = [
       el('button', { class: 'btn', html: U().icon('flip', 18) + 'Ruota 90°', onclick: () => ctx.editor.rotateSelected(90) }),
       el('button', { class: 'btn', text: 'Ruota 15°', onclick: () => ctx.editor.rotateSelected(15) }),
@@ -185,33 +186,18 @@
     if (calc.wallpaper) sheet.appendChild(el('div', { class: 'calc', html: '<b>' + calc.wallpaper.rolls + ' rotoli</b> · ' + CM.fmt.area(calc.wallpaper.area) + ' · <b>' + CM.fmt.eur(calc.wallpaper.matCost + calc.wallpaper.lab) + '</b>' }));
 
     sheet.appendChild(section('Stile guidato'));
-    const sty = el('div', { class: 'style-row' }, CM.STYLES.map(s => el('button', { class: 'style-chip', onclick: () => SH.applyStyle(ctx, rid, s) }, [
-      el('span', { class: 'sw', style: 'background:linear-gradient(135deg,' + s.walls + ' 0 45%,' + s.accent + ' 45% 70%,' + s.wood + ' 70%)' }),
+    const sty = el('div', { class: 'style-row' }, CM.style.all().map(s => el('button', { class: 'style-chip', onclick: () => SH.applyStyle(ctx, rid, s) }, [
+      el('span', { class: 'sw', style: 'background:linear-gradient(135deg,' + s.walls + ' 0 45%,' + s.accent + ' 45% 70%,' + ((CM.style.wood(s.wood) || {}).color || s.fabric) + ' 70%)' }),
       el('span', { text: s.label })
     ])));
     sheet.appendChild(sty);
   };
 
   SH.applyStyle = async function (ctx, rid, s) {
-    const ok = await U().confirmDialog('Stile ' + s.label, s.desc + '. Applico colore delle pareti, pavimento e colori dei mobili di questa stanza? Puoi annullare.', 'Applica');
-    if (!ok) return;
-    // pittura dello stile come materiale riutilizzabile
-    const pid = 'm-stile-' + s.id;
-    if (!CM.lib.material(pid)) CM.lib.saveMaterial({ id: pid, type: 'pittura', cat: 'pitture', name: 'Pittura stile ' + s.label.toLowerCase(), color: s.walls, code: '', resa: 10, canL: 5, price: 9 });
-    ctx.mut(pl => {
-      const r = pl.rooms[rid];
-      r.finish = r.finish || {};
-      r.finish.paint = Object.assign({ coats: 2 }, r.finish.paint, { mat: pid });
-      if (!['bagno'].includes(r.type)) r.finish.floor = Object.assign({ pose: 'dritta' }, r.finish.floor, { mat: s.floor });
-      for (const fid in pl.furniture) {
-        const f = pl.furniture[fid];
-        if (P.roomOf(pl, f) !== rid) continue;
-        const kind = CM.SHAPE_FINISH[f.shape];
-        if (kind) f.color = s[kind];
-      }
-      r.style = s.id;
-    });
-    U().toast('Stile ' + s.label + ' applicato');
+    const r = await U().dialog({ title: 'Stile ' + s.label, text: s.desc + '. Applico colori delle pareti (con una parete d\u2019accento), pavimento e finiture dei mobili. Puoi annullare.', actions: [{ label: 'Annulla', value: null }, { label: 'Tutta la casa', value: 'casa' }, { label: 'Questa stanza', value: 'stanza', primary: true }] });
+    if (!r) return;
+    ctx.mut(pl => { if (r === 'casa') CM.style.applyToHouse(pl, s); else CM.style.applyToRoom(pl, rid, s); });
+    U().toast('Stile ' + s.label + ' applicato' + (r === 'casa' ? ' a tutta la casa' : ''));
   };
 
   /* ---------- Planimetria di sfondo ---------- */
@@ -239,6 +225,8 @@
       el('button', { class: 'btn', text: 'Cancella una zona', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('erase'); } }),
       el('button', { class: 'btn', text: 'Sposta', onclick: () => { ctx.closeUnderlay(true); ctx.editor.setTool('moveUnderlay'); } }),
       el('button', { class: 'btn', text: 'Riconosci i muri', onclick: () => ctx.detectWalls(false) }),
+      el('button', { class: 'btn', text: 'Pulisci (togli scritte e simboli)', onclick: async () => { U().toast('Pulisco la planimetria\u2026'); try { const nu = await CM.underlay.clean(ctx.editor.plan.underlay); ctx.mut(pl => { pl.underlay = nu; }, 'clean'); U().toast('Fatto: restano solo le linee lunghe (muri). Puoi annullare.'); } catch (e) { U().toast('Non riesco a pulirla'); } } }),
+      el('button', { class: 'btn', text: 'Raddrizza la foto', onclick: async () => { const u = ctx.editor.plan.underlay; const im = await CM.app.straighten({ src: u.src, pxW: u.pxW, pxH: u.pxH }); if (im && im.src !== u.src) ctx.mut(pl => { pl.underlay = Object.assign({}, pl.underlay, im, { hM: pl.underlay.wM * im.pxH / im.pxW }); }, 'warp'); } }),
       el('button', { class: 'btn', text: 'Riconosci con Gemini', onclick: () => ctx.detectWalls(true) }),
       el('button', { class: 'btn', text: 'Sostituisci', onclick: () => ctx.loadUnderlay() }),
       el('button', { class: 'btn danger', text: 'Rimuovi', onclick: () => ctx.mut(pl => { pl.underlay = null; }) })
