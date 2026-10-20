@@ -89,7 +89,7 @@
     let n = 0;
     const skip = new Set();
     for (let k = 0; k < 400; k++) {
-      const w = CM.problems(plan, {}).find(x => x.fix && ['Elimina', 'Unisci', 'Raddrizza'].includes(x.fixLabel) && !skip.has(x.text + JSON.stringify(x.sel)));
+      const w = CM.problems(plan, {}).find(x => x.fix && ['Elimina', 'Unisci', 'Raddrizza', 'Taglia', 'Attacca'].includes(x.fixLabel) && !skip.has(x.text + JSON.stringify(x.sel)));
       if (!w) break;
       if (w.fix(plan)) n++; else skip.add(w.text + JSON.stringify(w.sel));
     }
@@ -145,6 +145,54 @@
             return true;
           }
         });
+      }
+    }
+    // muri che sporgono oltre un incrocio, o estremi staccati di pochi centimetri da un altro muro
+    {
+      const deg = {};
+      for (const id in plan.walls) { const w = plan.walls[id]; deg[w.a] = (deg[w.a] || 0) + 1; deg[w.b] = (deg[w.b] || 0) + 1; }
+      const done = new Set();
+      for (const id in plan.walls) {
+        const w = plan.walls[id];
+        for (const [ne, no] of [[w.a, w.b], [w.b, w.a]]) {
+          if (deg[ne] !== 1) continue;
+          const E = plan.nodes[ne], O = plan.nodes[no];
+          if (!E || !O) continue;
+          const L = G.dist(E, O); if (L < 0.05) continue;
+          const u = { x: (E.x - O.x) / L, y: (E.y - O.y) / L };
+          let best = null;
+          for (const xid in plan.walls) {
+            if (xid === id) continue;
+            const x = plan.walls[xid];
+            if (x.a === ne || x.b === ne) continue;
+            const P1 = plan.nodes[x.a], P2 = plan.nodes[x.b];
+            const ex = P2.x - P1.x, ey = P2.y - P1.y, lx = Math.hypot(ex, ey); if (lx < 0.05) continue;
+            const den = u.x * ey - u.y * ex;
+            if (Math.abs(den) < 1e-6) continue; // parallelo
+            // t: distanza da O lungo il muro, sx: posizione lungo l'altro muro (0..1)
+            const t = ((P1.x - O.x) * ey - (P1.y - O.y) * ex) / den;
+            const sx = ((P1.x - O.x) * u.y - (P1.y - O.y) * u.x) / den;
+            if (sx < -0.02 || sx > 1.02) continue;
+            const over = L - t; // >0: sporge oltre; <0: si ferma prima
+            const lim = Math.max(0.3, (x.t || 0.1) + 0.1);
+            if (t > 0.05 && over > 0.005 && over < lim) { if (!best || Math.abs(over) < Math.abs(best.over)) best = { xid, t, over, kind: 'cut' }; }
+            else if (t > L && -over < 0.25 && -over > 0.005) { if (!best || Math.abs(over) < Math.abs(best.over)) best = { xid, t, over, kind: 'join' }; }
+          }
+          if (!best) continue;
+          const key = id + ne; if (done.has(key)) continue; done.add(key);
+          const at = { x: O.x + u.x * best.t, y: O.y + u.y * best.t };
+          if (best.kind === 'cut') {
+            out.push({
+              text: 'Muro che sporge di ' + CM.fmt.cm(best.over) + ' oltre l’incrocio', sel: { type: 'wall', id }, fixLabel: 'Taglia',
+              fix: (pl) => { const n = pl.nodes[ne]; if (!n || !pl.walls[id]) return false; n.x = r3(at.x); n.y = r3(at.y); const near = Object.keys(pl.nodes).find(k => k !== ne && G.dist(pl.nodes[k], n) < 0.03); if (near) { P.mergeNodes(pl, near, ne); return true; } const hit = P.wallUnder(pl, n.x, n.y, 0.01, ne); if (hit) P.splitWall(pl, hit.wid, ne); P.tidy(pl); return true; }
+            });
+          } else {
+            out.push({
+              text: 'Muro staccato di ' + CM.fmt.cm(-best.over) + ' dal muro vicino', sel: { type: 'wall', id }, fixLabel: 'Attacca',
+              fix: (pl) => { const n = pl.nodes[ne]; if (!n || !pl.walls[id]) return false; n.x = r3(at.x); n.y = r3(at.y); const near = Object.keys(pl.nodes).find(k => k !== ne && G.dist(pl.nodes[k], n) < 0.03); if (near) { P.mergeNodes(pl, near, ne); return true; } const hit = P.wallUnder(pl, n.x, n.y, 0.01, ne); if (hit) P.splitWall(pl, hit.wid, ne); P.tidy(pl); return true; }
+            });
+          }
+        }
       }
     }
     // vertici quasi sovrapposti ma non uniti
