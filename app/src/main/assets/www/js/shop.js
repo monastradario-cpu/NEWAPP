@@ -196,6 +196,24 @@
           }));
         }
       }
+      // pagina di un singolo prodotto con il modello 3D: lo scarico e lo collego all'articolo
+      const sel1 = cands.filter((c, i) => selected[i] && c.kind === 'item');
+      if (sel1.length === 1 && (res.models || []).length) {
+        U().toast('Scarico il modello 3D del prodotto\u2026');
+        for (const u of res.models.slice(0, 3)) { const id = await CM.saveModel(u); if (id) { sel1[0].model = id; break; } }
+        U().toast(sel1[0].model ? 'Modello 3D vero salvato: nel 3D vedrai proprio questo mobile' : 'Modello 3D non disponibile: uso la forma standard');
+      }
+      // progetto di un planner (PAX, METOD, BEST\u00c5, bagno): propongo di crearlo come composizione
+      const comp = CM.config && CM.config.fromProductList(res.items || [], res.text);
+      if (comp && (res.items || []).length >= 3) {
+        const go = await U().dialog({ title: 'Progetto ' + CM.config.SYSTEMS[comp.system].short + ' riconosciuto', text: 'In questa pagina c\u2019\u00e8 un progetto con ' + comp.modules.length + ' moduli (' + Math.round(comp.w * 100) + ' cm). Lo creo come composizione unica, modificabile nel configuratore e con la lista della spesa?', actions: [{ label: 'No, articoli singoli', value: false }, { label: 'Crea composizione', value: true, primary: true }] });
+        if (go) {
+          comp.store = store; comp.url = res.url;
+          CM.lib.saveItem(Object.assign({ id: CM.uid('c') }, comp));
+          if (CM.app && CM.app.project()) { const pl = await U().confirmDialog('Composizione salvata', 'La trovi in I miei articoli. La metto ora in pianta?', 'Metti in pianta'); if (pl) CM.app.placeItem(comp); }
+          return;
+        }
+      }
       let n = 0, lastItem = null;
       cands.forEach((c, i) => {
         if (!selected[i]) return;
@@ -203,7 +221,7 @@
           CM.lib.saveMaterial(Object.assign({ id: CM.uid('m'), name: c.name, store, url: c.url, img: c.img }, c.data, { cat: c.cat === 'pitture' ? 'pitture' : 'pavimenti' }));
         } else {
           const d = Object.assign({}, c.data); delete d.dimsFound;
-          lastItem = Object.assign({ id: CM.uid('c'), name: c.name, cat: c.cat, store, url: c.url, img: c.img }, d);
+          lastItem = Object.assign({ id: CM.uid('c'), name: c.name, cat: c.cat, store, url: c.url, img: c.img }, d, c.model ? { model: c.model } : {});
           CM.lib.saveItem(lastItem);
         }
         n++;
@@ -263,6 +281,27 @@
       pendingImages[id] = (d) => { clearTimeout(t); resolve(d); };
       native().fetchImage(url, id, max || 800);
     });
+  };
+
+  // Modelli 3D dei negozi (GLB): scaricati dal telefono e salvati nell'app
+  const pendingBin = {};
+  CM.onBinaryFetched = function (id, data) { const cb = pendingBin[id]; delete pendingBin[id]; if (cb) cb(data || null); };
+  CM.fetchModel = function (url) {
+    if (!native() || !native().fetchBinary) return Promise.resolve(null);
+    return new Promise(resolve => {
+      const id = CM.uid('bin');
+      const t = setTimeout(() => { delete pendingBin[id]; resolve(null); }, 90000);
+      pendingBin[id] = (d) => { clearTimeout(t); resolve(d); };
+      native().fetchBinary(url, id);
+    });
+  };
+  // Scarica e salva il modello; restituisce l'id da mettere nell'articolo
+  CM.saveModel = async function (url) {
+    const d = await CM.fetchModel(url);
+    if (!d || d.length < 2000) return null;
+    try { await CM.glb.parse(CM.glb.fromDataUrl(d)); } catch (e) { return null; } // formato non leggibile: meglio la forma standard
+    const id = CM.uid('glb');
+    return CM.store.putRaw('mdl_' + id, d) === false ? null : id;
   };
 
   // Risultato della pagina del negozio (dal guscio Android)

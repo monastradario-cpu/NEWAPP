@@ -76,5 +76,15 @@
   }
   var crumbs = [];
   try { document.querySelectorAll('[class*="readcrumb"] a, nav[aria-label*="read"] a, [itemtype*="BreadcrumbList"] a').forEach(function (x) { var t = clean(x.innerText); if (t) crumbs.push(t); }); } catch (e) { }
-  return JSON.stringify({ items: out.slice(0, 80), title: document.title, url: location.href, host: location.hostname, crumbs: crumbs.join(' > '), text: text.slice(0, 12000) });
+  // modelli 3D (GLB) caricati o citati dalla pagina (es. “Vedi in 3D” di IKEA)
+  var models = [];
+  try {
+    (performance.getEntriesByType('resource') || []).forEach(function (e) { if (/\.glb(\?|$)/i.test(e.name)) models.push(e.name); });
+    var html = document.documentElement.innerHTML;
+    var re = /https?:\\?\/\\?\/[^"'\s<>]+?\.glb(?:\?[^"'\s<>]*)?/gi, mm;
+    while ((mm = re.exec(html)) && models.length < 10) models.push(mm[0].replace(/\\\//g, '/'));
+    (window.__casaMiaGlb || []).forEach(function (u) { models.push(u); });
+  } catch (e) { }
+  models = models.filter(function (u, i) { return models.indexOf(u) === i; });
+  return JSON.stringify({ items: out.slice(0, 80), title: document.title, url: location.href, host: location.hostname, crumbs: crumbs.join(' > '), text: text.slice(0, 30000), models: models });
 })();

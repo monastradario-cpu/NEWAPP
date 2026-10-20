@@ -650,6 +650,27 @@ public class MainActivity extends Activity {
             return false;
         }
 
+        /** Scarica un file binario (modello 3D GLB del negozio) e lo restituisce come data URL base64. */
+        @JavascriptInterface
+        public void fetchBinary(String url, String cbId) {
+            new Thread(() -> {
+                String result = "";
+                try {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                    c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36");
+                    c.setConnectTimeout(15000); c.setReadTimeout(40000);
+                    try (InputStream in = c.getInputStream()) {
+                        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                        byte[] buf = new byte[65536]; int n, tot = 0;
+                        while ((n = in.read(buf)) > 0) { bo.write(buf, 0, n); tot += n; if (tot > 30 * 1024 * 1024) throw new IOException("troppo grande"); }
+                        result = "data:model/gltf-binary;base64," + Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP);
+                    }
+                } catch (Exception e) { Log.w(TAG, "Modello 3D non scaricato", e); }
+                final String js = "window.CasaMia && CasaMia.onBinaryFetched && CasaMia.onBinaryFetched(" + org.json.JSONObject.quote(cbId) + "," + org.json.JSONObject.quote(result) + ")";
+                runOnUiThread(() -> web.evaluateJavascript(js, null));
+            }).start();
+        }
+
         /** Scarica un'immagine (foto prodotto) e la restituisce come data URL, aggirando i limiti dei siti. */
         @JavascriptInterface
         public void fetchImage(String url, String cbId, int maxSize) {

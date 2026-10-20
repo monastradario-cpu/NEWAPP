@@ -78,3 +78,35 @@ jobs:
           files: |
             CasaMia-*.apk
             CasaMia-PC-*.html
+
+  # Versione web (stesso codice dell'app): pubblicata su GitHub Pages dal ramo gh-pages
+  web:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Prepara il sito
+        run: |
+          mkdir -p /tmp/fonts && cd /tmp/fonts
+          npm pack @fontsource/instrument-sans@5 @fontsource/jetbrains-mono@5
+          for f in *.tgz; do mkdir -p "${f%.tgz}" && tar xzf "$f" -C "${f%.tgz}"; done
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p site && cp -r app/src/main/assets/www/. site/
+          mkdir -p site/fonts
+          cp /tmp/fonts/*/package/files/instrument-sans-latin-{400,500,600,700}-normal.woff2 site/fonts/
+          cp /tmp/fonts/*/package/files/jetbrains-mono-latin-{400,500}-normal.woff2 site/fonts/
+          cp tools/web/manifest.webmanifest tools/web/icon.svg site/
+          sed -i 's#</head>#<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><meta name="theme-color" content="\#F6F5F1"></head>#' site/index.html
+          touch site/.nojekyll
+          ls site
+      - name: Pubblica su GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: true

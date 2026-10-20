@@ -171,6 +171,8 @@
       color: item.color || '#D9D4CB', price: item.price != null ? item.price : null, store: item.store || '',
       url: item.url || '', img: item.img || '', light: !!item.light
     };
+    // finiture, modello 3D del negozio e composizioni (PAX, cucine\u2026)
+    for (const k of ['fabric', 'wood', 'metal', 'model', 'system', 'modules', 'front', 'handle', 'worktop', 'body', 'components', 'mount']) if (item[k] != null) plan.furniture[id][k] = CM.clone(item[k]);
     return id;
   };
   P.pointInFurniture = function (f, p) {

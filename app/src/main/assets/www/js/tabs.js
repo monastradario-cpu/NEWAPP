@@ -99,6 +99,7 @@
       el('h1', { text: 'Arredo e materiali' }),
       el('div', { class: 'actions', style: 'margin:0' }, [
         el('button', { class: 'btn primary', html: U().icon('opening', 18) + 'Importa da negozio', onclick: () => CM.shop.open() }),
+        el('button', { class: 'btn', html: U().icon('arredo', 18) + 'Componi armadio o cucina', onclick: () => CM.config.open(null, f => { const it = Object.assign({ id: CM.uid('c') }, f); CM.lib.saveItem(it); app().placeItem(it); U().toast('Tocca dove metterla: vicino a un muro si appoggia da sola'); }) }),
         el('button', { class: 'btn', text: 'Nuovo articolo', onclick: async () => {
           const c = await U().menu('Nuovo articolo', [{ id: 'mobile', label: 'Mobile o oggetto', icon: 'room' }, { id: 'piastrella', label: 'Piastrella o pavimento', icon: 'grid' }, { id: 'pittura', label: 'Pittura', icon: 'rename' }, { id: 'carta', label: 'Carta da parati', icon: 'beam' }]);
           if (c === 'mobile') {

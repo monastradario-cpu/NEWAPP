@@ -102,6 +102,10 @@
       const f = plan.furniture[hit.id];
       if (!f) { host.classList.add('hidden'); return; }
       host.appendChild(headRow('Mobile', f.name));
+      if (f.shape === 'composite') {
+        host.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn primary', text: 'Modifica la composizione', onclick: () => CM.config.open(f, nf => { ctx.mutate(pl => { const t = pl.furniture[hit.id]; if (!t) return; ['modules', 'front', 'handle', 'metal', 'worktop', 'body', 'mount', 'components', 'w', 'd', 'h', 'price', 'color'].forEach(k => { if (nf[k] !== undefined) t[k] = CM.clone(nf[k]); }); }); done(); }) })]));
+        return;
+      }
       host.appendChild(PS.furnitureControls(f, (fn) => { ctx.mutate(pl => { if (pl.furniture[hit.id]) fn(pl.furniture[hit.id]); }); done(); }));
       host.appendChild(el('div', { class: 'actions' }, [
         el('button', { class: 'btn small', text: 'Stesso stile a tutti i mobili della stanza', onclick: () => {

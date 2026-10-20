@@ -62,6 +62,18 @@
       }
       case 'round_table': ctx.beginPath(); ctx.ellipse(0, 0, hw, hd, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
       case 'chair': rect(-hw, -hd, w, d, 0.05); ctx.fill(); ctx.stroke(); rect(-hw, -hd, w, 0.08); ctx.stroke(); break;
+      case 'composite': {
+        rect(-hw, -hd, w, d); ctx.fill(); ctx.stroke();
+        const mods = f.modules || [];
+        let x = -hw;
+        ctx.save(); ctx.lineWidth = lw * 0.6;
+        for (const m of mods) { if (m.wall) continue; x += m.w; if (x < hw - 0.01) line(x, -hd, x, hd); }
+        // fronte
+        line(-hw, hd - 0.03, hw, hd - 0.03);
+        if (mods.some(m => m.wall)) { ctx.setLineDash([0.06, 0.05]); let xw = -hw; for (const m of mods) { if (!m.wall) continue; ctx.strokeRect(xw, -hd, m.w, Math.min(0.37, d)); xw += m.w; } ctx.setLineDash([]); }
+        ctx.restore();
+        break;
+      }
       case 'wardrobe': case 'kitchen_tall': {
         rect(-hw, -hd, w, d); ctx.fill(); ctx.stroke();
         line(-hw, hd - 0.04, hw, hd - 0.04);

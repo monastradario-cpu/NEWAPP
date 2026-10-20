@@ -38,6 +38,8 @@
       backend.put('indice', JSON.stringify(idx));
     },
     getJSON(key, fallback) { return readJSON(key, fallback); },
+    getRaw(key) { try { return backend.get(key); } catch (e) { return null; } },
+    putRaw(key, value) { try { return backend.put(key, value); } catch (e) { return false; } },
     putJSON(key, value) { return backend.put(key, JSON.stringify(value)); },
     pref(key, value) {
       const prefs = readJSON('preferenze', {});

@@ -55,8 +55,14 @@
     fields.appendChild(moneyField('Prezzo', f.price, v => mut(pl => { pl.furniture[id].price = v; })));
     fields.appendChild(U().textField('Negozio', f.store || '', v => mut(pl => { pl.furniture[id].store = v; }), { full: false }));
     sheet.appendChild(fields);
-    sheet.appendChild(el('div', { class: 'sec-title', text: 'Personalizza' }));
-    sheet.appendChild(CM.personal.furnitureControls(f, fn => mut(pl => { if (pl.furniture[id]) fn(pl.furniture[id]); })));
+    if (f.shape === 'composite') {
+      sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn primary', html: U().icon('arredo', 18) + 'Modifica la composizione', onclick: () => CM.config.open(f, nf => mut(pl => { const t = pl.furniture[id]; if (!t) return; ['modules', 'front', 'handle', 'metal', 'worktop', 'body', 'mount', 'components', 'w', 'd', 'h', 'price', 'color', 'name'].forEach(k => { if (nf[k] !== undefined) t[k] = CM.clone(nf[k]); }); })) })]));
+      if (f.components && f.components.length) sheet.appendChild(el('div', { class: 'card' }, f.components.map(c => el('div', { class: 'line' }, [el('span', { class: 'l-main', text: c.qty + ' \u00d7 ' + c.name }), el('span', { class: 'l-num', text: c.price ? CM.fmt.eur(c.price * c.qty) : '' })]))));
+    } else {
+      sheet.appendChild(el('div', { class: 'sec-title', text: 'Personalizza' }));
+      sheet.appendChild(CM.personal.furnitureControls(f, fn => mut(pl => { if (pl.furniture[id]) fn(pl.furniture[id]); })));
+    }
+    if (f.model) sheet.appendChild(el('p', { class: 'muted small', text: '\u2713 Nel 3D usa il modello vero del negozio.' }));
     const acts = [
       el('button', { class: 'btn', html: U().icon('flip', 18) + 'Ruota 90°', onclick: () => ctx.editor.rotateSelected(90) }),
       el('button', { class: 'btn', text: 'Ruota 15°', onclick: () => ctx.editor.rotateSelected(15) }),

@@ -947,7 +947,7 @@
           } catch (e) { console.error(e); U.toast('Esportazione 3D non riuscita'); }
           if (low) { view3d.lowWalls = true; view3d.build(project); }
         } }),
-        el('button', { class: 'chip small', text: 'Render AI', onclick: () => CM.share.render(project) }),
+        el('button', { class: 'chip small', text: 'Foto realistica AI', onclick: () => CM.share.render(project) }),
         el('button', { class: 'chip small', text: 'Inquadra', onclick: () => { view3d.resetCamera(); } })
       );
     };

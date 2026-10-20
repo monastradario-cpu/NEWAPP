@@ -415,18 +415,38 @@
   };
 
   // Render fotorealistico a partire dalla vista 3D
+  // Foto realistica della casa con i prodotti VERI che hai scelto (le loro foto vanno all'AI insieme alla vista 3D)
   SH.render = async function (project) {
     if (!CM.ai.enabled()) { await SH.aiSettings(); if (!CM.ai.enabled()) return; }
     const shot = CM.app.snapshot3d && CM.app.snapshot3d(true);
     if (!shot) { U().toast('Apri la scheda 3D e inquadra la vista da trasformare'); return; }
-    const style = await U().promptDialog('Render fotorealistico', '', { label: 'Indicazioni (facoltative)', text: 'Trasformo l’inquadratura 3D attuale in un’immagine realistica, mantenendo stanze e mobili. Es. luce del tramonto, stile scandinavo.', ok: 'Crea' });
-    if (style == null) return;
-    U().toast('Gemini sta creando l’immagine (può richiedere un minuto)…');
+    const plan = CM.project.plan(project);
+    // prodotti con foto: prima quelli dei negozi
+    const prods = Object.values(plan.furniture).filter(f => f.img).sort((a, b) => (b.store ? 1 : 0) - (a.store ? 1 : 0));
+    const pick = [];
+    for (const f of prods) {
+      if (pick.length >= 4) break;
+      let img = f.img;
+      if (/^https?:/i.test(img) && CM.localImage) img = await CM.localImage(img, 640);
+      if (img && /^data:/.test(img)) pick.push({ f, img });
+    }
+    const ta = el('textarea', { rows: 2, placeholder: 'Facoltativo: es. luce del tramonto, atmosfera calda', style: 'width:100%' });
+    const r = await U().dialog({ title: 'Foto realistica', text: 'Trasformo l\u2019inquadratura 3D in una foto d\u2019interni realistica' + (pick.length ? ', usando le foto vere di ' + pick.length + ' prodotti: ' + pick.map(p => p.f.name).join(', ') + '.' : '. Per vedere i prodotti veri, importali dai negozi con la loro foto.'), body: ta, actions: [{ label: 'Annulla', value: null }, { label: 'Crea', value: 'go', primary: true }] });
+    if (r !== 'go') return;
+    U().toast('Gemini sta creando la foto (pu\u00f2 richiedere un minuto)\u2026');
     try {
-      const img = await CM.ai.image('Trasforma questo modello 3D di un interno in una fotografia d’interni fotorealistica. Mantieni esattamente la disposizione di pareti, porte, finestre e mobili, la prospettiva e i colori dei materiali. Luce naturale, materiali realistici. ' + (style || ''), shot);
-      const body = el('div', {}, [el('img', { src: img, alt: 'Render fotorealistico', style: 'width:100%;border-radius:12px' })]);
-      const r = await U().dialog({ title: 'Render', body, actions: [{ label: 'Chiudi', value: false }, { label: 'Condividi', value: true, primary: true }] });
-      if (r) SH.file('render-' + safeName(project.name) + '.png', 'image/png', img, true);
+      const prompt = 'La PRIMA immagine \u00e8 un modello 3D semplificato di un interno: trasformala in una fotografia d\u2019interni fotorealistica, mantenendo esattamente prospettiva, pareti, porte, finestre, posizione e misure dei mobili e i colori dei materiali. ' +
+        (pick.length ? 'Le immagini successive sono le foto dei PRODOTTI REALI scelti: sostituisci i mobili semplificati con questi prodotti, identici nell\u2019aspetto (forma, colore, tessuto, dettagli): ' + pick.map((p, i) => (i + 2) + '\u00aa immagine = ' + p.f.name).join('; ') + '. ' : '') +
+        'Luce naturale, materiali realistici, nessuna persona, nessun testo. ' + (ta.value || '');
+      const parts = [{ text: prompt }];
+      const imgs = [shot].concat(pick.map(p => p.img));
+      const out = await CM.ai.call(CM.ai.imageModel(), parts.concat(imgs.map(i => { const m = /^data:([^;]+);base64,(.*)$/.exec(i); return { inline_data: { mime_type: m ? m[1] : 'image/jpeg', data: m ? m[2] : i } }; })), { image: true });
+      const img = out.images[0];
+      if (!img) throw new Error(out.text || 'Nessuna immagine ricevuta');
+      const body = el('div', {}, [el('img', { src: img, alt: 'Foto realistica', style: 'width:100%;border-radius:12px' })]);
+      const rr = await U().dialog({ title: 'Foto realistica', body, actions: [{ label: 'Chiudi', value: false }, { label: 'In bacheca', value: 'board' }, { label: 'Condividi', value: 'share', primary: true }] });
+      if (rr === 'share') SH.file('casa-' + safeName(project.name) + '.png', 'image/png', img, true);
+      if (rr === 'board' && CM.inspire) CM.inspire.addToBoard({ project, plan: () => plan, mutate: () => {} }, img, 'Foto realistica');
     } catch (e) { U().toast(CM.ai.errorText(e)); }
   };
 

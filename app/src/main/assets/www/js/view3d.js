@@ -170,7 +170,7 @@
       const hi = this.quality === 'realistico';
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, hi ? 2 : 1.5));
       this.renderer.shadowMap.enabled = true;
-      this.renderer.shadowMap.type = hi ? T.PCFSoftShadowMap : T.PCFShadowMap;
+      this.renderer.shadowMap.type = T.PCFSoftShadowMap;
       this.renderer.shadowMap.autoUpdate = true;
       this.renderer.toneMapping = T.ACESFilmicToneMapping;
       this.renderer.toneMappingExposure = 1.05;
@@ -183,10 +183,10 @@
       this.scene.add(this.hemi);
       this.sunLight = new T.DirectionalLight('#FFF4E0', 2.2);
       this.sunLight.castShadow = true;
-      this.sunLight.shadow.mapSize.set(hi ? 2048 : 1024, hi ? 2048 : 1024);
-      if (hi) this.sunLight.shadow.radius = 4;
+      this.sunLight.shadow.mapSize.set(hi ? 4096 : 2048, hi ? 4096 : 2048);
+      this.sunLight.shadow.normalBias = 0.02;
       // luce di riempimento morbida (solo realistico): ammorbidisce le ombre dentro le stanze
-      this.fill = new T.DirectionalLight('#FFF8EE', hi ? 0.45 : 0);
+      this.fill = new T.DirectionalLight('#FFF8EE', hi ? 0.45 : 0.3);
       this.fill.position.set(-10, 12, 8);
       this.scene.add(this.fill);
       this.sunLight.shadow.bias = -0.0006;
@@ -322,7 +322,12 @@
       if (room.type === 'piscina') { const t = canvasTexture('water', '#5DB0CF'); t.repeat.set(0.25, 0.25); return new T.MeshStandardMaterial({ map: t, roughness: 0.15, metalness: 0.1 }); }
       if (!m && room.type === 'giardino') { const t = canvasTexture('grass', '#7FA05F'); t.repeat.set(0.5, 0.5); return new T.MeshStandardMaterial({ map: t, roughness: 1 }); }
       if (!m && room.type === 'box') { const t = canvasTexture('concrete', '#C9C7C2'); t.repeat.set(0.3, 0.3); return new T.MeshStandardMaterial({ map: t, roughness: 1 }); }
-      if (!m) return new T.MeshStandardMaterial({ color: '#E8E2D6', roughness: 0.9 });
+      if (!m) {
+        // pavimento di base credibile finch\u00e9 non ne scegli uno
+        const wet = ['bagno', 'cucina', 'lavanderia'].includes(room.type), out = CM.roomType(room.type).outdoor;
+        const def = out ? { id: 'def-out', tex: 'tile', color: '#CFCBC3', tw: 0.3, th: 0.3 } : wet ? { id: 'def-wet', tex: 'tile', color: '#E3DFD8', tw: 0.6, th: 0.6 } : { id: 'def-wood', tex: 'wood', color: '#D4B48E', tw: 0.19, th: 1.2 };
+        return new T.MeshStandardMaterial({ map: this._surfaceTexture(def, 'dritta', redraw), roughness: def.tex === 'wood' ? 0.7 : 0.55 });
+      }
       return new T.MeshStandardMaterial({ map: this._surfaceTexture(m, f.pose, redraw), roughness: m.tex === 'marble' ? 0.35 : 0.75 });
     }
 
@@ -534,6 +539,111 @@
       return { main, fabric: kind === 'fabric' ? main : fabricMat(), wood: kind === 'wood' ? main : woodMat(), metal: metalMat, hi };
     }
 
+    // Modelli dei negozi: caricati una volta, poi riusati
+    _model(id) {
+      this._models = this._models || {};
+      const c = this._models[id];
+      if (c && c.obj) return c.obj;
+      if (c) return null; // in caricamento o non disponibile
+      this._models[id] = { loading: true };
+      const data = CM.store.getRaw('mdl_' + id);
+      if (!data) { this._models[id] = { failed: true }; return null; }
+      CM.glb.parse(CM.glb.fromDataUrl(data)).then(obj => { this._models[id] = { obj }; if (this.project) this.build(this.project); })
+        .catch(e => { console.warn && 0; this._models[id] = { failed: true, err: String(e.message || e) }; });
+      return null;
+    }
+
+    // Composizione componibile: moduli affiancati con frontali, maniglie, zoccolo, top e pensili
+    _buildComposite(f, g, M, mat, box, cyl) {
+      const T = window.THREE;
+      const CF = CM.config, S = CF && CF.SYSTEMS[f.system] || { kitchen: false };
+      const KH = CF ? CF.KITCHEN_H : { base: 0.88, top: 0.04, plinth: 0.1, wallBottom: 1.45, wallH: 0.8, wallD: 0.37, d: 0.6 };
+      const W = f.w, D = f.d;
+      const front = new T.MeshStandardMaterial({ color: (f.front && f.front.color) || f.color || '#F1EFEA', roughness: /lucido/i.test((f.front && f.front.name) || '') ? 0.25 : 0.55 });
+      const body = new T.MeshStandardMaterial({ color: '#EDEBE6', roughness: 0.7 });
+      const metal = M.metal;
+      const dark = mat({ color: '#2B2E33', roughness: 0.4 });
+      const steel = mat({ color: '#B9BEC4', metalness: 0.8, roughness: 0.3 });
+      const glass = new T.MeshStandardMaterial({ color: '#D8E6EC', transparent: true, opacity: 0.45, roughness: 0.05 });
+      const mirror = mat({ color: '#D8E6EC', metalness: 0.9, roughness: 0.05 });
+      const style = (f.front && f.front.style) || 'liscio';
+      const handleType = f.handle || 'maniglia';
+      const panel = (w, h, x, y, z, m) => {
+        box(w - 0.004, h - 0.004, 0.018, x, y, z, m || front);
+        if (style === 'telaio' && w > 0.2 && h > 0.2) { const t = 0.05; box(w - 2 * t, h - 2 * t, 0.006, x, y, z + 0.011, m || front); }
+        if (style === 'cannettato') { const n = Math.max(3, Math.round(w / 0.025)); for (let i = 0; i < n; i++) box(0.01, h - 0.02, 0.006, x - w / 2 + (i + 0.5) * w / n, y, z + 0.011, m || front); }
+      };
+      const handle = (x, y, z, vertical, len) => {
+        if (handleType === 'gola') return;
+        if (handleType === 'pomolo') { const c = cyl(0.012, 0.012, 0.025, x, y, z + 0.022, metal, 10); c.rotation.x = Math.PI / 2; return; }
+        const L = len || 0.16;
+        box(vertical ? 0.012 : L, vertical ? L : 0.012, 0.02, x, y, z + 0.02, metal);
+      };
+      const drawers = (x, y0, w, h, z, n) => { for (let i = 0; i < n; i++) { const hh = h / n; const yy = y0 + hh * (i + 0.5); panel(w, hh, x, yy, z); handle(x, yy + hh * 0.3, z, false, Math.min(0.3, w * 0.5)); } };
+      const mount = f.mount || 0;
+      const floor = (f.modules || []).filter(m => !m.wall), wall = (f.modules || []).filter(m => m.wall);
+      let x = -W / 2;
+      const zf = D / 2 - 0.009; // faccia dei frontali
+      let topRuns = [], runStart = null;
+      for (const m of floor) {
+        const cx = x + m.w / 2;
+        const tall = !!m.h && m.h > 1.2;
+        const H = S.kitchen ? (tall ? m.h : KH.base) : (m.h || (f.body && f.body.h) || f.h);
+        const dd = m.d || (f.body && f.body.d) || D;
+        const y0 = S.kitchen ? KH.plinth : mount;
+        const hb = S.kitchen ? (tall ? H - KH.plinth : KH.base - KH.plinth - KH.top) : H;
+        // zoccolo (cucina) o piedini
+        if (S.kitchen) box(m.w, KH.plinth, dd - 0.06, cx, KH.plinth / 2, -0.03 - (D - dd) / 2, dark);
+        box(m.w - 0.004, hb, dd - 0.02, cx, y0 + hb / 2, -0.01 - (D - dd) / 2, body);
+        const z = -D / 2 + dd - 0.009;
+        const yc = y0 + hb / 2;
+        switch (m.kind) {
+          case 'ante2': case 'lavello': panel(m.w / 2, hb, cx - m.w / 4, yc, z); panel(m.w / 2, hb, cx + m.w / 4, yc, z); handle(cx - 0.03, y0 + Math.min(hb * 0.55, 1.05), z, true, hb > 1.2 ? 0.3 : 0.12); handle(cx + 0.03, y0 + Math.min(hb * 0.55, 1.05), z, true, hb > 1.2 ? 0.3 : 0.12); break;
+          case 'scorrevole': panel(m.w / 2 + 0.03, hb, cx - m.w / 4 + 0.015, yc, z + 0.025); panel(m.w / 2 + 0.03, hb, cx + m.w / 4 - 0.015, yc, z); break;
+          case 'cassetti': case 'cottura': {
+            if (hb > 1.2) { panel(m.w, hb * 0.55, cx, y0 + hb * 0.725, z); handle(cx + m.w / 2 - 0.05, y0 + hb * 0.6, z, true, 0.3); drawers(cx, y0, m.w, hb * 0.45, z, 3); }
+            else drawers(cx, y0, m.w, hb, z, 3);
+            break;
+          }
+          case 'aperto': { for (let i = 1; i < 5; i++) box(m.w - 0.03, 0.018, dd - 0.04, cx, y0 + hb * i / 5, 0, body); break; }
+          case 'vetro': panel(m.w, hb, cx, yc, z, glass); handle(cx + m.w / 2 - 0.05, yc, z, true); break;
+          case 'specchio': panel(m.w, hb, cx, yc, z, mirror); handle(cx + m.w / 2 - 0.05, yc, z, true); break;
+          case 'forno': panel(m.w, hb * 0.18, cx, y0 + hb * 0.09, z); box(m.w - 0.02, hb * 0.78, 0.02, cx, y0 + hb * 0.6, z, dark); handle(cx, y0 + hb * 0.92, z, false, m.w * 0.7); break;
+          case 'colonnaForno': panel(m.w, hb * 0.3, cx, y0 + hb * 0.15, z); box(m.w - 0.02, hb * 0.22, 0.02, cx, y0 + hb * 0.45, z, dark); box(m.w - 0.02, hb * 0.12, 0.02, cx, y0 + hb * 0.63, z, dark); panel(m.w, hb * 0.3, cx, y0 + hb * 0.85, z); break;
+          case 'colonnaFrigo': panel(m.w, hb * 0.6, cx, y0 + hb * 0.3, z); panel(m.w, hb * 0.4, cx, y0 + hb * 0.8, z); handle(cx + m.w / 2 - 0.05, y0 + hb * 0.5, z, true, 0.3); handle(cx + m.w / 2 - 0.05, y0 + hb * 0.68, z, true, 0.2); break;
+          case 'lavastoviglie': panel(m.w, hb, cx, yc, z); handle(cx, y0 + hb - 0.05, z, false, m.w * 0.6); break;
+          case 'lavabo': { panel(m.w, hb / 2, cx, y0 + hb * 0.25, z); panel(m.w, hb / 2, cx, y0 + hb * 0.75, z); handle(cx, y0 + hb * 0.4, z, false, 0.2); handle(cx, y0 + hb * 0.9, z, false, 0.2); box(m.w + 0.01, 0.06, dd + 0.01, cx, y0 + hb + 0.03, 0, mat({ color: '#FFFFFF', roughness: 0.2 })); cyl(0.012, 0.012, 0.18, cx, y0 + hb + 0.15, -dd / 2 + 0.08, steel); break; }
+          case 'angolo': panel(m.w * 0.45, hb, cx + m.w * 0.27, yc, z); box(m.w * 0.55, hb, 0.02, cx - m.w * 0.22, yc, z, body); handle(cx + 0.06, y0 + hb - 0.08, z, false); break;
+          default: panel(m.w, hb, cx, yc, z); handle(cx + m.w / 2 - 0.05, hb > 1.2 ? y0 + 1.05 : y0 + hb - 0.08, z, true, hb > 1.2 ? 0.3 : 0.12);
+        }
+        // top della cucina: tratti continui tra le colonne
+        if (S.kitchen && !tall) { if (runStart == null) runStart = x; }
+        else if (runStart != null) { topRuns.push([runStart, x]); runStart = null; }
+        if (S.kitchen && m.kind === 'lavello') box(Math.min(0.5, m.w - 0.15), 0.01, 0.4, cx, KH.base + 0.006, 0.02, steel);
+        if (S.kitchen && m.kind === 'cottura') { box(Math.min(0.58, m.w - 0.04), 0.008, 0.5, cx, KH.base + 0.005, 0.02, dark); }
+        if (S.kitchen && m.kind === 'lavello') { const c = cyl(0.012, 0.012, 0.3, cx, KH.base + 0.15, -D / 2 + 0.07, steel); c.castShadow = true; }
+        x += m.w;
+      }
+      if (runStart != null) topRuns.push([runStart, x]);
+      const topMat = mat({ color: (f.worktop && f.worktop.color) || '#7D7A75', roughness: /quarzo|marmo/i.test((f.worktop && f.worktop.name) || '') ? 0.25 : 0.5 });
+      if (S.kitchen) for (const [a, b] of topRuns) box(b - a, KH.top, D + 0.02, (a + b) / 2, KH.base - KH.top / 2, 0.01, topMat);
+      // pensili / contenitori a parete (dopo le colonne alte iniziali)
+      x = -W / 2 + (CF ? CF.wallStart(f) : 0);
+      for (const m of wall) {
+        const cx = x + m.w / 2;
+        const hh = S.kitchen ? KH.wallH : (m.h || 0.7);
+        const yb = S.kitchen ? KH.wallBottom : mount + ((f.body && f.body.h) || 0.6) + 0.35;
+        const dd = S.kitchen ? KH.wallD : (m.d || 0.15);
+        box(m.w - 0.004, hh, dd - 0.02, cx, yb + hh / 2, -D / 2 + dd / 2 - 0.01, body);
+        const z = -D / 2 + dd - 0.009;
+        if (m.kind === 'specchio') panel(m.w, hh, cx, yb + hh / 2, z, mirror);
+        else { panel(m.w, hh, cx, yb + hh / 2, z); handle(cx + m.w / 2 - 0.05, yb + 0.08, z, true, 0.12); }
+        if (m.kind === 'cappa') box(m.w * 0.9, 0.06, dd + 0.05, cx, yb - 0.03, -D / 2 + dd / 2, steel);
+        x += m.w;
+      }
+      void g;
+    }
+
     _buildFurniture(f, mat) {
       const T = window.THREE;
       const g = new T.Group();
@@ -547,6 +657,17 @@
       const hi = M.hi;
       const W = f.w, D = f.d, H = f.h || 0.8;
       const box = (w, h, d, x, y, z, m) => { const b = new T.Mesh(new T.BoxGeometry(w, h, d), m || base); b.position.set(x, y, z); b.castShadow = true; b.receiveShadow = true; g.add(b); return b; };
+      // modello 3D vero del negozio, se l'abbiamo
+      if (f.model && CM.glb) {
+        const mdl = this._model(f.model);
+        if (mdl) {
+          const obj = CM.glb.fit(mdl.clone(true), W, D, H);
+          g.add(obj);
+          g.position.set(f.x, f.elev || 0, f.y); g.rotation.y = -(f.rot || 0);
+          this.group.add(g);
+          return;
+        }
+      }
       const soft = (w, h, d, x, y, z, m, r) => { if (!hi) return box(w, h, d, x, y, z, m); const b = new T.Mesh(this._rbox(w, h, d, r || 0.05), m || base); b.position.set(x, y, z); b.castShadow = true; b.receiveShadow = true; g.add(b); return b; };
       const cyl = (rt, rb, h, x, y, z, m, seg) => { const c = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || 20), m || base); c.position.set(x, y, z); c.castShadow = true; g.add(c); return c; };
       const legs = (h, inset, m, th) => { const t = th || 0.04; for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(t, h, t, sx * (W / 2 - inset), h / 2, sz * (D / 2 - inset), m || dark); };
@@ -602,6 +723,7 @@
           soft(W, H - 0.5, 0.035, 0, 0.5 + (H - 0.5) / 2, -D / 2 + 0.02, wood, 0.015);
           legs(0.44, 0.03, f.metal ? dark : wood, 0.03);
           break;
+        case 'composite': this._buildComposite(f, g, M, mat, box, cyl); break;
         case 'wardrobe': case 'cabinet': case 'kitchen_tall': case 'fridge': case 'washer': {
           box(W, H, D, 0, H / 2, 0, f.shape === 'fridge' || f.shape === 'washer' ? light : base);
           if (f.shape === 'washer') { const c = cyl(0.17, 0.17, 0.02, 0, H * 0.45, D / 2 + 0.005, mat({ color: '#9BB3C1', metalness: 0.2 })); c.rotation.x = Math.PI / 2; }
@@ -695,11 +817,12 @@
       this.sunLight.position.set(cx + hx * Math.cos(el) * dist, Math.sin(el) * dist, cz + hz * Math.cos(el) * dist);
       this.sunLight.target.position.set(cx, 0, cz);
       const cam = this.sunLight.shadow.camera;
-      cam.left = cam.bottom = -size * 0.9; cam.right = cam.top = size * 0.9; cam.near = 0.5; cam.far = dist * 2.5;
+      const half = size * 0.62 + 1;
+      cam.left = cam.bottom = -half; cam.right = cam.top = half; cam.near = 0.5; cam.far = dist * 2.5;
       cam.updateProjectionMatrix();
       const day = s.elevation > 0;
       this.sunLight.intensity = day ? 0.6 + 2.0 * Math.min(1, s.elevation / 35) : 0;
-      this.hemi.intensity = day ? 0.75 : 0.25;
+      this.hemi.intensity = day ? 0.95 : 0.3;
       this.scene.background.set(day ? (s.elevation < 8 ? '#F1DCC8' : '#E9EEF2') : '#2B3442');
       this.sunLight.color.set(s.elevation < 10 ? '#FFD8A8' : '#FFF4E0');
       for (const l of this.lamps || []) l.intensity = day ? 1.2 : 3.2;
@@ -850,6 +973,7 @@
         geo.applyMatrix4(o.matrixWorld);
         if (!geo.attributes.normal) geo.computeVertexNormals();
         const pos = geo.attributes.position.array, nor = geo.attributes.normal.array;
+        if (pos.some(v => !isFinite(v))) return;
         const groups = geo.groups && geo.groups.length && Array.isArray(o.material) ? geo.groups : [{ start: 0, count: pos.length / 3, materialIndex: 0 }];
         for (const g of groups) {
           const m = Array.isArray(o.material) ? o.material[g.materialIndex] : o.material;
@@ -891,12 +1015,11 @@
       if (!this.ready) return;
       const T = window.THREE, hi = q === 'realistico';
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, hi ? 2 : 1.5));
-      this.renderer.shadowMap.type = hi ? T.PCFSoftShadowMap : T.PCFShadowMap;
-      const sz = hi ? 2048 : 1024;
+      const sz = hi ? 4096 : 2048;
       if (this.sunLight.shadow.map) { this.sunLight.shadow.map.dispose(); this.sunLight.shadow.map = null; }
       this.sunLight.shadow.mapSize.set(sz, sz);
       this.sunLight.shadow.radius = hi ? 4 : 1;
-      if (this.fill) this.fill.intensity = hi ? 0.45 : 0;
+      if (this.fill) this.fill.intensity = hi ? 0.45 : 0.3;
       this._w = 0; this.resize();
       if (this.project) this.build(this.project);
     }
