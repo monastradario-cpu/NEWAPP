@@ -692,6 +692,61 @@
       this.commit('drag');
     }
 
+    /* ---------- Modifiche dalla vista 3D ----------
+       Il 3D passa punti in metri; le tolleranze dei magneti (pensate in pixel) vengono
+       calcolate come se la pianta fosse a una scala comoda per il dito. */
+    at3d(fn) {
+      const v = this.view;
+      this.view = Object.assign({}, v, { s: 64 });
+      let out;
+      try { out = fn(); } finally { this.view = v; }
+      this.draw();
+      return out;
+    }
+    extDragStart(target, world) {
+      if (this._ext) this.extDragCancel();
+      this.snapshot();
+      this._ext = { type: 'drag', target, startWorld: world, snapshotTaken: true, orig: JSON.parse(this.undoStack[this.undoStack.length - 1]) };
+    }
+    extDragMove(world) { if (this._ext) this.at3d(() => this._dragTo(this._ext, world)); }
+    extDragEnd() {
+      const g = this._ext; this._ext = null;
+      if (!g) return;
+      if (JSON.stringify(this.plan) === this.undoStack[this.undoStack.length - 1]) { this.undoStack.pop(); this._emitHistory(); return; }
+      this.at3d(() => this._endDrag(g));
+    }
+    extDragCancel() {
+      const g = this._ext; this._ext = null;
+      if (!g) return;
+      this._replacePlan(this.undoStack.pop());
+      this._emitHistory();
+      this.draw();
+    }
+    extPlaceFurniture(item, world) { this.pendingItem = item; this.at3d(() => this._placeFurniture(world)); this.pendingItem = null; }
+    extPlaceOpening(kind, world) {
+      const hit = this.at3d(() => this._nearestWall(world, 50));
+      if (!hit) return false;
+      this.openingKind = kind;
+      this.at3d(() => this._placeOpening(world));
+      return true;
+    }
+    extPlaceFixture(kind, world) { this.fixtureKind = kind; this.at3d(() => this._placeFixture(world)); this.setTool('select'); }
+    extRect(a, b) {
+      const st = 0.05;
+      this.draft = { a: { x: G.snap(a.x, st), y: G.snap(a.y, st) }, b: { x: G.snap(b.x, st), y: G.snap(b.y, st) } };
+      this.at3d(() => this._finishRect());
+    }
+    extWallTap(world) {
+      if (this.tool !== 'wall') this.setTool('wall');
+      this.at3d(() => this._chainTap(world));
+      return this.chain ? { points: this.chain.points.slice() } : null;
+    }
+    extWallPreview(world) {
+      if (!this.chain) return null;
+      const sp = this.at3d(() => this.snapPoint(world, { walls: true, from: this.chain.points[this.chain.points.length - 1] }));
+      return { points: this.chain.points.slice(), cursor: sp.p };
+    }
+
     /* ---------- Stanza rettangolare ---------- */
     _finishRect() {
       const d = this.draft;

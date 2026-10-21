@@ -299,15 +299,41 @@
       // arredi
       for (const id in plan.furniture) { plan.furniture[id]._id = id; this._buildFurniture(plan.furniture[id], mat); delete plan.furniture[id]._id; }
       // impianti visibili (termosifoni, condizionatori, caldaia)
+      const layers = (project.settings && project.settings.layers) || {};
       for (const id in plan.fixtures) {
         const fx = plan.fixtures[id];
-        if (!['termosifone', 'condizionatore', 'caldaia', 'quadro'].includes(fx.kind)) continue;
-        const dims = { termosifone: [0.8, 0.6, 0.1], condizionatore: [0.85, 0.3, 0.22], caldaia: [0.45, 0.7, 0.35], quadro: [0.4, 0.5, 0.1] }[fx.kind];
-        const m = new T.Mesh(new T.BoxGeometry(dims[0], dims[1], dims[2]), mat({ color: '#F4F4F2' }));
+        const def = CM.FIXTURES[fx.kind];
+        if (!def) continue;
         const rot = this._wallAngleNear(plan, fx);
-        m.position.set(fx.x, CM.FIXTURES[fx.kind].elev + dims[1] / 2, fx.y);
-        m.rotation.y = rot; m.castShadow = true; this.group.add(m);
+        const big = ['termosifone', 'condizionatore', 'caldaia', 'quadro'].includes(fx.kind);
+        if (!big && layers.impianti === false && !this.editMode) continue;
+        let m;
+        if (big) {
+          const dims = { termosifone: [0.8, 0.6, 0.1], condizionatore: [0.85, 0.3, 0.22], caldaia: [0.45, 0.7, 0.35], quadro: [0.4, 0.5, 0.1] }[fx.kind];
+          m = new T.Mesh(new T.BoxGeometry(dims[0], dims[1], dims[2]), mat({ color: '#F4F4F2' }));
+          m.position.set(fx.x, def.elev + dims[1] / 2, fx.y);
+        } else if (fx.kind === 'luce') {
+          // punto luce a soffitto: un piccolo disco; con i muri bassi resta sospeso a mezz'aria per vederlo
+          m = new T.Mesh(new T.CylinderGeometry(0.09, 0.09, 0.03, 20), mat({ color: '#FFF6DA', emissive: '#FFE7B0', emissiveIntensity: 0.5 }));
+          m.position.set(fx.x, low ? 1.6 : def.elev, fx.y);
+        } else {
+          // placchette di prese, interruttori, attacchi: colore del tipo di impianto
+          const col = (CM.FIXTURE_GROUPS[def.group] || {}).color || '#888';
+          m = new T.Mesh(new T.BoxGeometry(0.1, 0.1, 0.03), mat({ color: '#FAFAF8' }));
+          const dot = new T.Mesh(new T.BoxGeometry(0.05, 0.05, 0.035), mat({ color: col }));
+          m.add(dot);
+          m.position.set(fx.x, Math.min(def.elev, low ? 1.0 : 9), fx.y);
+        }
+        m.rotation.y = rot; m.castShadow = big;
+        m.userData = { kind: 'fixture', id };
+        this.group.add(m);
+        if (this.editMode) {
+          const hb = new T.Mesh(new T.SphereGeometry(0.24, 8, 6), new T.MeshBasicMaterial());
+          hb.position.copy(m.position); hb.visible = false; hb.userData = { kind: 'fixture', id, hitbox: true };
+          this.group.add(hb);
+        }
       }
+      this._applySel();
 
       this.updateSun();
       if (!this._placed) { this.resetCamera(); this._placed = true; }
@@ -400,7 +426,7 @@
       const edge = mat({ color: w.state === 'nuovo' && this.phase === 'dopo' ? '#EDE6E1' : '#E3E0DA' });
       // BoxGeometry: +x,-x,+y,-y,+z,-z. Lunghezza su x, altezza y, spessore z; +z locale = lato n
       const mats = [edge, edge, top, top, this._wallFaceMaterial(roomPlus, id), this._wallFaceMaterial(roomMinus, id)];
-      const ops = Object.values(plan.openings).filter(o => o.wall === id).sort((a, b) => a.pos - b.pos);
+      const ops = Object.keys(plan.openings).filter(k => plan.openings[k].wall === id).map(k => Object.assign({ _id: k }, plan.openings[k])).sort((a, b) => a.pos - b.pos);
       const ext = w.t / 2;
       const pieces = [];
       let cur = -ext;
@@ -411,7 +437,17 @@
         const topO = Math.min(o.h + bottom, H);
         if (bottom > 0) pieces.push([s0, s1, 0, bottom]);
         if (topO < H) pieces.push([s0, s1, topO, H]);
+        const before = this.group.children.length;
         this._buildOpening(plan, o, u, n, w, bottom, topO, mat);
+        for (let k = before; k < this.group.children.length; k++) this.group.children[k].userData = { kind: 'opening', id: o._id, wall: id };
+        // area invisibile per toccare facilmente porte e finestre (anche gli archi)
+        if (this.editMode) {
+          const hb = new T.Mesh(new T.BoxGeometry(o.w, Math.max(topO - bottom, 0.3), w.t + 0.08), new T.MeshBasicMaterial());
+          const oc = { x: A.x + u.x * o.pos, y: A.y + u.y * o.pos };
+          hb.position.set(oc.x, bottom + Math.max(topO - bottom, 0.3) / 2, oc.y); hb.rotation.y = -Math.atan2(u.y, u.x);
+          hb.visible = false; hb.userData = { kind: 'opening', id: o._id, wall: id, hitbox: true };
+          this.group.add(hb);
+        }
         cur = Math.max(cur, s1);
       }
       if (cur < L + ext) pieces.push([cur, L + ext, 0, H]);
@@ -833,7 +869,11 @@
     resetCamera() {
       const b = this.bounds || { minX: 0, minY: 0, maxX: 8, maxY: 6 };
       this.orbit.target = { x: (b.minX + b.maxX) / 2, y: 0.8, z: (b.minY + b.maxY) / 2 };
-      this.orbit.r = Math.max(b.maxX - b.minX, b.maxY - b.minY, 4) * 1.35;
+      const size = Math.max(b.maxX - b.minX, b.maxY - b.minY, 4);
+      // la casa deve entrare tutta anche con il telefono in verticale (campo orizzontale stretto)
+      const cam = this.camera, asp = cam && cam.aspect ? cam.aspect : 1;
+      const vf = (cam && cam.fov ? cam.fov : 50) * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * asp);
+      this.orbit.r = Math.min(120, Math.max(size * 1.35, size * 0.6 / Math.tan(Math.min(vf, hf) / 2)));
       this.orbit.theta = -0.7; this.orbit.phi = 0.9;
       // passeggiata: parti dal centro della stanza più grande
       let best = null, ba = 0;
@@ -865,13 +905,51 @@
     _bind() {
       const el = this.renderer.domElement;
       const pos = (e) => { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-      el.addEventListener('pointerdown', e => { el.setPointerCapture(e.pointerId); this.pointers.set(e.pointerId, pos(e)); this._g = null; this._tap = this.pointers.size === 1 ? { p: pos(e), t: Date.now(), moved: 0 } : null; });
+      const H = this.hooks;
+      el.addEventListener('pointerdown', e => {
+        el.setPointerCapture(e.pointerId); this.pointers.set(e.pointerId, pos(e)); this._g = null;
+        this._tap = this.pointers.size === 1 ? { p: pos(e), t: Date.now(), moved: 0 } : null;
+        if (this.pointers.size > 1) {
+          // secondo dito: si torna a girare/zoomare, annullando ciò che si stava facendo
+          if (this._drag) { if (this._drag.started && H.onDragCancel) H.onDragCancel(); this._drag = null; }
+          if (this._rect) { this._rect = null; this.showDraft(null); }
+          return;
+        }
+        if (!this.editMode) return;
+        const p = pos(e);
+        if (this.tool && this.tool.type === 'rect') {
+          const a = this.floorAt(p.x, p.y, 0);
+          if (a) { this._rect = { a, b: a }; }
+          return;
+        }
+        if (!this.tool && H.onDragStart) {
+          const hit = this.pick(p.x, p.y);
+          if (hit && H.canDrag && H.canDrag(hit)) {
+            const h = hit.kind === 'furniture' || hit.kind === 'fixture' ? Math.max(0, Math.min(hit.y3 || 0, 2.4)) : Math.max(0, Math.min(hit.y3 || 0, 2.6));
+            this._drag = { hit, h, start: this.floorAt(p.x, p.y, h), p0: p, started: false };
+          }
+        }
+      });
       el.addEventListener('pointermove', e => {
         if (!this.pointers.has(e.pointerId)) return;
         const p = pos(e), prev = this.pointers.get(e.pointerId);
         this.pointers.set(e.pointerId, p);
         if (this._tap) this._tap.moved = Math.max(this._tap.moved, Math.hypot(p.x - this._tap.p.x, p.y - this._tap.p.y));
         const pts = [...this.pointers.values()];
+        if (pts.length === 1 && this._drag) {
+          const d = this._drag;
+          if (!d.started && Math.hypot(p.x - d.p0.x, p.y - d.p0.y) < 8) return;
+          const w = this.floorAt(p.x, p.y, d.h);
+          if (!w || !d.start) return;
+          if (!d.started) { d.started = true; H.onDragStart(d.hit, d.start); }
+          H.onDragMove(w, d.start);
+          return;
+        }
+        if (pts.length === 1 && this._rect) {
+          const b = this.floorAt(p.x, p.y, 0);
+          if (b) { this._rect.b = b; if (H.onRect) H.onRect(this._rect.a, b, false); }
+          return;
+        }
         if (pts.length === 1) {
           const dx = p.x - prev.x, dy = p.y - prev.y;
           if (this.mode === 'walk') { this.walk.yaw += dx * 0.005; this.walk.pitch = Math.max(-1.2, Math.min(1.2, this.walk.pitch - dy * 0.004)); }
@@ -896,17 +974,137 @@
       const up = e => {
         this.pointers.delete(e.pointerId); this._g = null;
         const tp = this._tap; this._tap = null;
-        if (e.type === 'pointerup' && tp && tp.moved < 8 && Date.now() - tp.t < 450 && this.hooks.onPick) {
-          const hit = this.pick(tp.p.x, tp.p.y);
-          this.hooks.onPick(hit);
+        const isTap = e.type === 'pointerup' && tp && tp.moved < 8 && Date.now() - tp.t < 450;
+        if (this._drag) {
+          const d = this._drag; this._drag = null;
+          if (d.started) { if (e.type === 'pointerup') H.onDragEnd(); else if (H.onDragCancel) H.onDragCancel(); return; }
         }
+        if (this._rect) {
+          const r = this._rect; this._rect = null;
+          if (e.type === 'pointerup' && H.onRect) H.onRect(r.a, r.b, true);
+          return;
+        }
+        if (!isTap) return;
+        const hit = this.pick(tp.p.x, tp.p.y);
+        if (this.editMode && this.tool && H.onPlace) {
+          H.onPlace({ floor: this.floorAt(tp.p.x, tp.p.y, 0), hit });
+          return;
+        }
+        if (H.onPick) H.onPick(hit);
       };
       el.addEventListener('pointerup', up);
       el.addEventListener('pointercancel', up);
       el.addEventListener('wheel', e => { e.preventDefault(); if (this.mode === 'orbit') { this.orbit.r = Math.max(2, Math.min(120, this.orbit.r * Math.exp(e.deltaY * 0.001))); this.dirty = true; } }, { passive: false });
     }
 
-    // Cosa c'\u00e8 sotto il dito: parete (con la stanza dal lato toccato), pavimento o mobile
+    // Punto della pianta (in metri) sotto il dito, su un piano orizzontale all'altezza h
+    floorAt(x, y, h) {
+      const T = window.THREE;
+      const r = this.renderer.domElement.getBoundingClientRect();
+      const v = new T.Vector2((x / r.width) * 2 - 1, -(y / r.height) * 2 + 1);
+      const rc = new T.Raycaster();
+      rc.setFromCamera(v, this.camera);
+      const out = new T.Vector3();
+      const plane = new T.Plane(new T.Vector3(0, 1, 0), -(h || 0));
+      if (!rc.ray.intersectPlane(plane, out)) return null;
+      // troppo lontano (vista quasi orizzontale): non è un punto utile
+      const b = this.bounds || { minX: -10, minY: -10, maxX: 10, maxY: 10 };
+      const pad = 30;
+      if (out.x < b.minX - pad || out.x > b.maxX + pad || out.z < b.minY - pad || out.z > b.maxY + pad) return null;
+      return { x: out.x, y: out.z };
+    }
+
+    // Modalità modifica: aree di tocco più grandi e impianti sempre visibili
+    setEdit(on) {
+      on = !!on;
+      if (this.editMode === on) return;
+      this.editMode = on;
+      if (!on) { this.tool = null; this.showDraft(null); this.setSelected(null); }
+      if (this.project) this.build(this.project);
+    }
+
+    setTool(t) { this.tool = t || null; if (!t) this.showDraft(null); }
+
+    // Anteprima di ciò che stai disegnando: stanza (rettangolo) o muri (catena di punti)
+    showDraft(d) {
+      const T = window.THREE;
+      if (!this.scene) return;
+      if (this.draftGroup) { this.draftGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); }); this.scene.remove(this.draftGroup); this.draftGroup = null; }
+      if (!d) { this.dirty = true; return; }
+      const g = new T.Group();
+      const blue = new T.MeshBasicMaterial({ color: '#1F4FD1', transparent: true, opacity: 0.28, depthWrite: false });
+      const line = new T.MeshBasicMaterial({ color: '#1F4FD1' });
+      if (d.rect) {
+        const { a, b } = d.rect;
+        const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+        if (w > 0.01 && h > 0.01) {
+          const m = new T.Mesh(new T.BoxGeometry(w, 0.02, h), blue);
+          m.position.set((a.x + b.x) / 2, 0.02, (a.y + b.y) / 2); g.add(m);
+          const t = 0.04;
+          for (const [cx, cz, sx, sz] of [[(a.x + b.x) / 2, a.y, w, t], [(a.x + b.x) / 2, b.y, w, t], [a.x, (a.y + b.y) / 2, t, h], [b.x, (a.y + b.y) / 2, t, h]]) {
+            const e = new T.Mesh(new T.BoxGeometry(sx, 0.4, sz), blue); e.position.set(cx, 0.2, cz); g.add(e);
+          }
+        }
+      }
+      if (d.chain) {
+        const pts = d.chain.points.concat(d.chain.cursor ? [d.chain.cursor] : []);
+        pts.forEach((p, i) => {
+          const s = new T.Mesh(new T.SphereGeometry(i === 0 ? 0.11 : 0.08, 14, 10), line);
+          s.position.set(p.x, 0.08, p.y); g.add(s);
+          if (i > 0) {
+            const q = pts[i - 1], L = Math.hypot(p.x - q.x, p.y - q.y);
+            if (L > 0.01) {
+              const m = new T.Mesh(new T.BoxGeometry(L, 1.0, 0.1), blue);
+              m.position.set((p.x + q.x) / 2, 0.5, (p.y + q.y) / 2); m.rotation.y = -Math.atan2(p.y - q.y, p.x - q.x); g.add(m);
+            }
+          }
+        });
+      }
+      if (d.point) {
+        const s = new T.Mesh(new T.SphereGeometry(0.1, 14, 10), line); s.position.set(d.point.x, 0.1, d.point.y); g.add(s);
+      }
+      this.draftGroup = g; this.scene.add(g); this.dirty = true;
+    }
+
+    // Elemento selezionato: resta evidenziato (anche dopo ogni ricostruzione)
+    setSelected(hit) { this._sel = hit || null; this._applySel(); }
+    _applySel() {
+      const T = window.THREE;
+      if (!this.scene) return;
+      if (this._selHelper) { this.scene.remove(this._selHelper); this._selHelper = null; }
+      const hit = this._sel;
+      if (!hit || !this.editMode) { this.dirty = true; return; }
+      const box = this._boxOf(hit);
+      if (!box) { this.dirty = true; return; }
+      box.expandByScalar(0.02);
+      this._selHelper = new T.Box3Helper(box, new T.Color('#1F4FD1'));
+      this.scene.add(this._selHelper); this.dirty = true;
+    }
+    _boxOf(hit) {
+      const T = window.THREE;
+      const box = new T.Box3();
+      this.group.traverse(o => {
+        const u = o.userData || {};
+        if (u.hitbox) return;
+        const ok = (hit.kind === 'wall' && u.kind === 'wall' && u.id === hit.id) || (hit.kind === 'floor' && u.kind === 'room' && u.id === hit.room) ||
+          (hit.kind === u.kind && u.id === hit.id && ['furniture', 'opening', 'fixture'].includes(hit.kind));
+        if (ok) box.expandByObject(o);
+      });
+      return box.isEmpty() ? null : box;
+    }
+
+    // Sposta subito un mobile già costruito (mentre lo trascini), senza ricostruire la scena
+    moveLive(kind, id, x, y, rot) {
+      let found = null;
+      this.group.children.forEach(o => { const u = o.userData || {}; if (u.kind === kind && u.id === id && !u.hitbox) found = o; });
+      if (!found) return false;
+      found.position.x = x; found.position.z = y;
+      if (rot != null) found.rotation.y = -rot;
+      this._applySel();
+      return true;
+    }
+
+    // Cosa c'è sotto il dito: parete (con la stanza dal lato toccato), pavimento, mobile, porta/finestra o impianto
     pick(x, y) {
       const T = window.THREE;
       const r = this.renderer.domElement.getBoundingClientRect();
@@ -919,14 +1117,17 @@
         while (o && !(o.userData && o.userData.kind)) o = o.parent;
         if (!o) continue;
         const u = o.userData;
+        const at = { point: { x: h.point.x, y: h.point.z }, y3: h.point.y };
         if (u.kind === 'wall') {
           const mi = h.face ? h.face.materialIndex : -1;
           const room = mi === 4 ? u.rooms[0] : mi === 5 ? u.rooms[1] : null;
-          if (mi === 2 || mi === 3 || mi === 0 || mi === 1) return { kind: 'wall', id: u.id, room: u.rooms[0] || u.rooms[1] || null, top: true };
-          return { kind: 'wall', id: u.id, room };
+          if (mi === 2 || mi === 3 || mi === 0 || mi === 1) return Object.assign({ kind: 'wall', id: u.id, room: u.rooms[0] || u.rooms[1] || null, top: true }, at);
+          return Object.assign({ kind: 'wall', id: u.id, room }, at);
         }
-        if (u.kind === 'room') return { kind: 'floor', room: u.id };
-        if (u.kind === 'furniture') return { kind: 'furniture', id: u.id };
+        if (u.kind === 'room') return Object.assign({ kind: 'floor', room: u.id }, at);
+        if (u.kind === 'furniture') return Object.assign({ kind: 'furniture', id: u.id }, at);
+        if (u.kind === 'opening') return Object.assign({ kind: 'opening', id: u.id, wall: u.wall }, at);
+        if (u.kind === 'fixture') return Object.assign({ kind: 'fixture', id: u.id }, at);
       }
       return null;
     }
@@ -935,11 +1136,8 @@
     flash(hit) {
       if (!hit) return;
       const T = window.THREE;
-      const objs = [];
-      this.group.traverse(o => { const u = o.userData || {}; if ((hit.kind === 'wall' && u.kind === 'wall' && u.id === hit.id) || (hit.kind === 'floor' && u.kind === 'room' && u.id === hit.room) || (hit.kind === 'furniture' && u.kind === 'furniture' && u.id === hit.id)) objs.push(o); });
-      const box = new T.Box3();
-      objs.forEach(o => box.expandByObject(o));
-      if (box.isEmpty()) return;
+      const box = this._boxOf(hit);
+      if (!box) return;
       const helper = new T.Box3Helper(box, new T.Color('#1F4FD1'));
       this.scene.add(helper); this.dirty = true;
       setTimeout(() => { this.scene.remove(helper); this.dirty = true; }, 900);

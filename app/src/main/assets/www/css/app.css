@@ -494,3 +494,14 @@ input, textarea, [contenteditable], .dialog p, .tips, .prob-text { -webkit-user-
   .hint { left: auto; right: 12px; bottom: 10px; max-width: 46%; font-size: 12.5px; padding: 6px 10px; }
   .v3d-tip { font-size: 12px; max-width: 50%; }
 }
+
+/* Modifica dentro il 3D */
+.v3d-bar .edit-seg { flex-shrink: 0; background: rgba(255,255,255,0.96); box-shadow: 0 2px 8px rgba(27,30,34,0.14); }
+.v3d-bar .edit-seg button { min-height: 40px; padding: 0 14px; font-weight: 700; }
+.v3d-bar .edit-seg button.on { background: var(--accent); color: #fff; }
+.v3d-tool { position: absolute; left: 10px; right: 10px; top: 62px; z-index: 7; display: flex; gap: 8px; align-items: center; background: rgba(27,30,34,0.9); color: #fff; padding: 10px 12px; border-radius: 14px; font-size: 14px; line-height: 1.35; }
+.v3d-tool.hidden { display: none; }
+.v3d-tool .grow { flex: 1; min-width: 0; }
+.v3d-tool .btn { flex-shrink: 0; }
+.v3d-panel .quick3d .mat-row { margin-bottom: 4px; }
+.v3d-tool .btn:not(.primary) { color: var(--ink); background: #fff; }

@@ -10,7 +10,7 @@
   let saveTimer = 0;
   let tab = 'pianta';
   let sheetMode = null; // 'underlay' quando è aperto il pannello della planimetria
-  let lastRevealed = '';
+  let lastRevealed = '', lastRevealed3d = '';
 
   /* ================= HOME ================= */
   function relDate(ts) {
@@ -452,7 +452,9 @@
   }
 
   function renderSheet() {
-    const sheet = $('sheet');
+    const in3d = is3dEdit();
+    const sheet = in3d ? $('v3dPanel') : $('sheet');
+    if (in3d) { $('sheet').classList.add('hidden'); $('stage').classList.remove('with-sheet'); }
     if (sheet.contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName) && document.activeElement.type !== 'range') return;
     const sel = editor.sel;
     const plan = editor.plan;
@@ -461,9 +463,11 @@
     const multi = editor.tool === 'multi' && editor.multi;
     const has = sheetMode === 'underlay' || (sel.type && sel.type !== 'node') || !!multi;
     sheet.classList.toggle('hidden', !has);
-    $('stage').classList.toggle('with-sheet', !!has);
-    $('hint').classList.toggle('hidden', !!has);
-    if (!has) { lastRevealed = ''; return; }
+    if (!in3d) {
+      $('stage').classList.toggle('with-sheet', !!has);
+      $('hint').classList.toggle('hidden', !!has);
+    }
+    if (!has) { lastRevealed = ''; if (in3d) view3d.setSelected(null); return; }
     const ctx = sheetCtx();
     const mut = ctx.mut;
     sheet.appendChild(el('div', { class: 'sheet-grab', 'aria-hidden': 'true' }));
@@ -626,11 +630,18 @@
       CM.sheets.fixture(sheet, ctx, sel.id);
     } else {
       sheet.classList.add('hidden');
+      if (in3d) { view3d.setSelected(null); return; }
       $('stage').classList.remove('with-sheet');
       $('hint').classList.remove('hidden');
       return;
     }
     const key = sheetMode === 'underlay' ? 'underlay' : sel.type + ':' + sel.id;
+    if (in3d) {
+      decorate3dSheet(sheet, sel);
+      if (key === lastRevealed3d) sheet.scrollTop = scroll; else sheet.scrollTop = 0;
+      lastRevealed3d = key;
+      return;
+    }
     requestAnimationFrame(() => {
       editor.resize();
       if (key === lastRevealed) { sheet.scrollTop = scroll; return; }
@@ -894,7 +905,9 @@
 
   /* ---------- Schede ---------- */
   function setTab(id, silent) {
+    const prevTab = tab;
     tab = id;
+    if (prevTab === '3d' && id !== '3d') { endTool3d(true); if (view3d && view3d.editMode) { $('v3dPanel').classList.add('hidden'); renderSheet(); } }
     document.querySelectorAll('.tab').forEach(t => {
       const on = t.dataset.tab === id;
       t.classList.toggle('active', on);
@@ -928,6 +941,9 @@
     const bar = $('v3dBar');
     const render = () => {
       bar.innerHTML = '';
+      const editSeg = el('div', { class: 'seg edit-seg' }, [['vista', 'Vista'], ['modifica', 'Modifica']].map(([v, l]) => el('button', { class: (v === 'modifica') === !!view3d.editMode ? 'on' : '', text: l, onclick: () => { if ((v === 'modifica') !== !!view3d.editMode) { set3dEdit(v === 'modifica'); render(); } } })));
+      bar.append(editSeg);
+      if (view3d.editMode) bar.append(el('button', { class: 'chip small accent', html: '<b style="font-size:16px;line-height:1">+</b><span>Aggiungi</span>', onclick: add3d }));
       bar.append(
         seg([['orbit', 'Modellino'], ['walk', 'Passeggiata']], view3d.mode, v => { view3d.setMode(v); $('joystick').classList.toggle('hidden', v !== 'walk'); render(); }),
         seg([['prima', 'Prima'], ['dopo', 'Dopo']], view3d.phase, v => { view3d.phase = v; view3d.build(project); render(); }),
@@ -990,29 +1006,202 @@
       project, room: room || null,
       plan: () => editor.plan,
       mutate: (fn) => editor.mutate(fn, 'style'),
-      after: () => { if (view3d && tab === '3d') view3d.build(project); updateSummary(); },
-      openRoom: (rid) => { $('v3dPanel').classList.add('hidden'); focusSel({ type: 'room', id: rid }); }
+      after: () => { schedule3d(); updateSummary(); },
+      openRoom: (rid) => {
+        if (is3dEdit()) { last3dHit = { kind: 'floor', room: rid }; editor.select({ type: 'room', id: rid }); U.toast('Piastrelle a parete e carta da parati: qui sotto, in “Rivestimento a parete”'); return; }
+        $('v3dPanel').classList.add('hidden'); focusSel({ type: 'room', id: rid });
+      }
     };
+  }
+
+  /* ---------- Modifica dentro il 3D ---------- */
+  let last3dHit = null, v3dTool = null, r3 = 0;
+  function is3dEdit() { return tab === '3d' && !!view3d && !!view3d.editMode; }
+  function schedule3d() {
+    if (!view3d || tab !== '3d' || r3) return;
+    r3 = requestAnimationFrame(() => { r3 = 0; if (view3d && tab === '3d') view3d.build(project); });
+  }
+  const hitToSel = (h) => !h ? {} : h.kind === 'floor' ? { type: 'room', id: h.room } : { type: h.kind, id: h.id };
+  const selToHit = (sel) => {
+    if (!sel || !sel.type) return null;
+    if (sel.type === 'room') return { kind: 'floor', room: sel.id };
+    if (last3dHit && hitToSel(last3dHit).type === sel.type && hitToSel(last3dHit).id === sel.id) return last3dHit;
+    return { kind: sel.type, id: sel.id };
+  };
+
+  // Nel 3D il pannello del 2D si arricchisce delle finiture rapide (colori, pavimenti, tessuti)
+  function decorate3dSheet(sheet, sel) {
+    const hit = selToHit(sel);
+    view3d.setSelected(hit);
+    if (!hit || !['floor', 'wall'].includes(hit.kind)) return;
+    if (hit.kind === 'wall' && !hit.room) return;
+    const box = el('div', { class: 'quick3d' });
+    try {
+      CM.personal.panel3d(box, hit, Object.assign(persCtx(), { bare: true }));
+    } catch (e) { console.error(e); return; }
+    if (!box.childNodes.length) return;
+    const title = { floor: 'Pavimento: scegli e vedi subito', wall: 'Colore di questa parete', furniture: 'Finiture' }[hit.kind];
+    // pavimento: prima i materiali; muro: prima le misure, poi il colore
+    const anchor = hit.kind === 'wall' ? sheet.querySelector('.fields') : sheet.querySelector('.sheet-head');
+    const wrap = el('div', {}, [el('div', { class: 'sec-title', text: title }), box]);
+    if (anchor && anchor.nextSibling) sheet.insertBefore(wrap, anchor.nextSibling); else sheet.appendChild(wrap);
+  }
+
+  function tip3d(text) { const t = $('v3dTip'); if (!text) { t.classList.add('hidden'); return; } t.textContent = text; t.classList.remove('hidden'); }
+  const EDIT_TIP = 'Modifica: trascina mobili, porte, finestre e impianti · tocca per misure e materiali · un muro si sposta dopo averlo toccato';
+
+  function set3dEdit(on) {
+    endTool3d(true);
+    editor.select({});
+    $('v3dPanel').classList.add('hidden');
+    view3d.setEdit(on);
+    S.pref('v3dEdit', on);
+    tip3d(on ? EDIT_TIP : 'Tocca una parete, un pavimento o un mobile per cambiarne colori e materiali');
+    renderSheet();
+  }
+
+  function toolMsg(text, buttons) {
+    let box = $('v3dTool');
+    if (!box) { box = el('div', { class: 'v3d-tool', id: 'v3dTool', role: 'status' }); $('view3dWrap').appendChild(box); }
+    box.innerHTML = '';
+    if (!text) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    box.append(el('span', { class: 'grow', text }), ...(buttons || []));
+  }
+  function startTool3d(t) {
+    v3dTool = t;
+    editor.select({});
+    $('v3dPanel').classList.add('hidden');
+    tip3d(null);
+    view3d.setTool({ type: t.type });
+    const cancel = el('button', { class: 'btn small', text: 'Annulla', onclick: () => endTool3d() });
+    if (t.type === 'chain') toolMsg('Tocca il pavimento punto per punto: ogni tocco alza un muro. Torna al primo punto per chiudere la stanza.', [el('button', { class: 'btn small primary', text: 'Fine', onclick: () => endTool3d() }), cancel]);
+    else toolMsg(t.msg, [cancel]);
+  }
+  function endTool3d(silent) {
+    if (v3dTool && v3dTool.type === 'chain') { editor.finishChain(); editor.setTool('select'); }
+    v3dTool = null;
+    if (view3d) { view3d.setTool(null); view3d.showDraft(null); }
+    toolMsg(null);
+    if (!silent && is3dEdit()) tip3d(null);
+  }
+
+  async function add3d() {
+    const what = await U.menu('Aggiungi nel 3D', [
+      { id: 'furniture', label: 'Mobile o oggetto', icon: 'sofa' },
+      { id: 'opening', label: 'Porta o finestra', icon: 'opening' },
+      { id: 'room', label: 'Stanza (trascina sul pavimento)', icon: 'room' },
+      { id: 'wall', label: 'Muri (tocca i punti)', icon: 'thick' },
+      { id: 'fixture', label: 'Luce, presa o impianto', icon: 'plug' }
+    ]);
+    if (!what) return;
+    if (what === 'furniture') {
+      const it = await CM.tabs.pickItem();
+      if (!it) return;
+      startTool3d({ type: 'point', what, item: it, msg: 'Tocca il pavimento dove vuoi ' + (it.name || 'il mobile') + ': vicino a un muro si appoggia da solo' });
+    } else if (what === 'opening') {
+      const k = await U.menu('Porta o finestra', Object.keys(CM.OPENINGS).map(id => ({ id, label: CM.OPENINGS[id].label, icon: 'opening' })));
+      if (!k) return;
+      startTool3d({ type: 'point', what, kind: k, msg: 'Tocca il muro nel punto dove vuoi ' + CM.OPENINGS[k].label.toLowerCase() });
+    } else if (what === 'room') {
+      startTool3d({ type: 'rect', what, msg: 'Trascina il dito sul pavimento per disegnare la stanza (due dita per girare la vista)' });
+    } else if (what === 'wall') {
+      editor.setTool('wall');
+      startTool3d({ type: 'chain', what });
+    } else if (what === 'fixture') {
+      const k = await U.menu('Luce, presa o impianto', Object.keys(CM.FIXTURES).map(id => ({ id, label: CM.FIXTURES[id].label, icon: 'plug' })));
+      if (!k) return;
+      startTool3d({ type: 'point', what, kind: k, msg: 'Tocca il muro o il pavimento dove vuoi ' + CM.FIXTURES[k].label.toLowerCase() });
+    }
+  }
+
+  function onPlace3d({ floor, hit }) {
+    const t = v3dTool;
+    if (!t) return;
+    const onWall = hit && (hit.kind === 'wall' || hit.kind === 'opening') ? hit.point : null;
+    const onFloor = hit && hit.kind === 'floor' ? hit.point : floor;
+    if (t.what === 'furniture') {
+      if (!onFloor) return U.toast('Tocca un punto del pavimento');
+      editor.extPlaceFurniture(t.item, onFloor);
+      endTool3d();
+    } else if (t.what === 'opening') {
+      const p = onWall || floor;
+      if (!p || !editor.extPlaceOpening(t.kind, p)) return U.toast('Tocca un muro');
+      endTool3d();
+    } else if (t.what === 'fixture') {
+      const p = onWall || (hit && hit.point) || floor;
+      if (!p) return U.toast('Tocca un muro o il pavimento');
+      editor.extPlaceFixture(t.kind, p);
+      endTool3d();
+    } else if (t.what === 'wall') {
+      const p = (hit && hit.kind === 'wall' && hit.top ? hit.point : null) || floor;
+      if (!p) return;
+      const ch = editor.extWallTap(p);
+      if (!ch) { endTool3d(); U.toast('Stanza chiusa: scegli tipo e materiali qui sotto'); return; }
+      view3d.showDraft({ chain: ch });
+    }
   }
 
   function open3d() {
     if (!view3d) {
       view3d = new CM.View3D($('view3d'), {
         onPick: (hit) => {
+          if (view3d.editMode) {
+            tip3d(null);
+            last3dHit = hit;
+            if (!hit) { editor.select({}); return; }
+            view3d.flash(hit);
+            editor.select(hitToSel(hit));
+            return;
+          }
           $('v3dTip').classList.add('hidden');
           if (!hit) { $('v3dPanel').classList.add('hidden'); return; }
           view3d.flash(hit);
           CM.personal.panel3d($('v3dPanel'), hit, persCtx());
+        },
+        canDrag: (hit) => {
+          if (!view3d.editMode || !hit) return false;
+          if (['furniture', 'fixture', 'opening'].includes(hit.kind)) return !!editor.plan[{ furniture: 'furniture', fixture: 'fixtures', opening: 'openings' }[hit.kind]][hit.id];
+          if (hit.kind === 'wall') return editor.sel.type === 'wall' && editor.sel.id === hit.id;
+          return false;
+        },
+        onDragStart: (hit, world) => {
+          tip3d(null);
+          last3dHit = hit;
+          const sel = hitToSel(hit);
+          if (editor.sel.type !== sel.type || editor.sel.id !== sel.id) editor.select(sel);
+          editor.extDragStart(sel, world);
+        },
+        onDragMove: (world) => {
+          editor.extDragMove(world);
+          const t = editor._ext && editor._ext.target;
+          if (t && t.type === 'furniture') { const f = editor.plan.furniture[t.id]; if (f && view3d.moveLive('furniture', t.id, f.x, f.y, f.rot || 0)) return; }
+          schedule3d();
+        },
+        onDragEnd: () => { editor.extDragEnd(); schedule3d(); },
+        onDragCancel: () => { editor.extDragCancel(); schedule3d(); },
+        onPlace: onPlace3d,
+        onRect: (a, b, final) => {
+          if (!final) { view3d.showDraft({ rect: { a, b } }); return; }
+          view3d.showDraft(null);
+          if (Math.abs(b.x - a.x) < 0.5 || Math.abs(b.y - a.y) < 0.5) { U.toast('Trascina per una stanza di almeno 50 cm'); return; }
+          editor.extRect(a, b);
+          endTool3d();
+          U.toast('Stanza creata: misure, tipo e pavimento qui sotto');
         }
       });
       if (!view3d.init()) { U.toast('La vista 3D non è disponibile su questo dispositivo'); view3d = null; return; }
+      view3d.editMode = !!S.pref('v3dEdit');
       build3dUi();
       new ResizeObserver(() => view3d && view3d.resize()).observe($('view3d'));
+      if (view3d.editMode) tip3d(EDIT_TIP);
     }
     view3d.setVisible(true);
     view3d._placed = view3d.project === project && view3d._placed;
+    view3d.resize();
     view3d.build(project);
     view3d.resize();
+    if (view3d.editMode) renderSheet();
   }
 
   /* ---------- Menu del progetto ---------- */
@@ -1255,7 +1444,7 @@
   /* ================= AVVIO ================= */
   function init() {
     editor = new CM.Editor($('planCanvas'), {
-      onChange: () => { scheduleSave(); updateSummary(); updateHeader(); renderSheet(); },
+      onChange: () => { scheduleSave(); updateSummary(); updateHeader(); renderSheet(); schedule3d(); },
       onSelect: () => { if (editor.sel.type) sheetMode = null; renderSheet(); },
       onHint: (text, actions) => {
         $('hintText').textContent = text;

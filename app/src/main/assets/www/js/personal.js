@@ -94,7 +94,7 @@
     if (!hit) { host.classList.add('hidden'); return; }
     const plan = ctx.plan();
     const close = el('button', { class: 'icon-btn ghost', 'aria-label': 'Chiudi', html: U().icon('close'), onclick: () => { host.classList.add('hidden'); } });
-    const headRow = (kind, name) => el('div', { class: 'sheet-head' }, [el('div', { class: 'grow' }, [el('span', { class: 'kind', text: kind }), el('span', { class: 'name', text: name })]), close]);
+    const headRow = (kind, name) => ctx.bare ? document.createDocumentFragment() : el('div', { class: 'sheet-head' }, [el('div', { class: 'grow' }, [el('span', { class: 'kind', text: kind }), el('span', { class: 'name', text: name })]), close]);
     const done = () => { ctx.after && ctx.after(); PS.panel3d(host, hit, ctx); };
     host.classList.remove('hidden');
 
