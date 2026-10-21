@@ -97,6 +97,7 @@
     const headRow = (kind, name) => ctx.bare ? document.createDocumentFragment() : el('div', { class: 'sheet-head' }, [el('div', { class: 'grow' }, [el('span', { class: 'kind', text: kind }), el('span', { class: 'name', text: name })]), close]);
     const done = () => { ctx.after && ctx.after(); PS.panel3d(host, hit, ctx); };
     host.classList.remove('hidden');
+    if (!ctx.bare && U().grab) host.appendChild(U().grab());
 
     if (hit.kind === 'furniture') {
       const f = plan.furniture[hit.id];

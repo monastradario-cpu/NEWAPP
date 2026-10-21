@@ -915,7 +915,7 @@
           if (this._rect) { this._rect = null; this.showDraft(null); }
           return;
         }
-        if (!this.editMode) return;
+        if (!this.editMode || e.button > 0 || e.shiftKey) return;
         const p = pos(e);
         if (this.tool && this.tool.type === 'rect') {
           const a = this.floorAt(p.x, p.y, 0);
@@ -948,6 +948,15 @@
         if (pts.length === 1 && this._rect) {
           const b = this.floorAt(p.x, p.y, 0);
           if (b) { this._rect.b = b; if (H.onRect) H.onRect(this._rect.a, b, false); }
+          return;
+        }
+        if (pts.length === 1 && e.pointerType === 'mouse' && this.mode === 'orbit' && ((e.buttons & 6) || e.shiftKey)) {
+          // PC: tasto destro (o centrale, o Maiusc) sposta la vista
+          const k = this.orbit.r * 0.0016, th = this.orbit.theta;
+          const mx = p.x - prev.x, my = p.y - prev.y;
+          this.orbit.target.x -= (Math.cos(th) * mx - Math.sin(th) * my) * k;
+          this.orbit.target.z -= (-Math.sin(th) * mx - Math.cos(th) * my) * k;
+          this.dirty = true;
           return;
         }
         if (pts.length === 1) {
@@ -992,6 +1001,7 @@
         }
         if (H.onPick) H.onPick(hit);
       };
+      el.addEventListener('contextmenu', e => e.preventDefault());
       el.addEventListener('pointerup', up);
       el.addEventListener('pointercancel', up);
       el.addEventListener('wheel', e => { e.preventDefault(); if (this.mode === 'orbit') { this.orbit.r = Math.max(2, Math.min(120, this.orbit.r * Math.exp(e.deltaY * 0.001))); this.dirty = true; } }, { passive: false });

@@ -243,5 +243,52 @@
     openOverlay(box, (r) => { if (onDone) onDone(r); });
   }
 
-  CM.ui = { el, icon, toast, openOverlay, dialog, confirmDialog, promptDialog, menu, closeOverlay, overlayOpen, numField, textField, selectField, segField, stat, tutorial };
+  /* Maniglia dei pannelli in basso: trascina per alzare/abbassare, tocca (o clic) per ridurre/aprire */
+  function grab() {
+    const min = document.body.classList.contains('panel-min');
+    return el('div', { class: 'sheet-grab', role: 'separator', 'aria-label': 'Trascina per alzare o abbassare il pannello', title: 'Trascina per alzare o abbassare \u00b7 clic per ridurre o riaprire' }, [
+      el('i', { 'aria-hidden': 'true' }),
+      el('span', { class: 'grab-btn', text: min ? '\u25b4 Apri' : '\u25be Abbassa' })
+    ]);
+  }
+  function setPanelMin(on) {
+    document.body.classList.toggle('panel-min', !!on);
+    document.querySelectorAll('.sheet-grab .grab-btn').forEach(b => { b.textContent = on ? '\u25b4 Apri' : '\u25be Abbassa'; });
+    try { CM.store.pref('panelMin', !!on); } catch (e) {}
+  }
+  (function panelSizer() {
+    if (typeof document === 'undefined') return;
+    try { const h = CM.store && CM.store.pref('panelH'); if (h) document.documentElement.style.setProperty('--panel-h', (h * 100).toFixed(1) + '%'); if (CM.store && CM.store.pref('panelMin')) document.addEventListener('DOMContentLoaded', () => setPanelMin(true)); } catch (e) {}
+    let d = null;
+    document.addEventListener('pointerdown', e => {
+      const g = e.target.closest && e.target.closest('.sheet-grab');
+      if (!g) return;
+      const panel = g.closest('.sheet, .v3d-panel');
+      if (!panel || getComputedStyle(g).display === 'none') return;
+      e.preventDefault();
+      d = { g, panel, y0: e.clientY, moved: false, box: panel.parentElement.getBoundingClientRect(), id: e.pointerId };
+      try { g.setPointerCapture(e.pointerId); } catch (er) {}
+    });
+    document.addEventListener('pointermove', e => {
+      if (!d || e.pointerId !== d.id) return;
+      if (!d.moved && Math.abs(e.clientY - d.y0) < 5) return;
+      d.moved = true;
+      document.body.classList.remove('panel-min');
+      const f = Math.max(0.1, Math.min(0.92, (d.box.bottom - e.clientY) / d.box.height));
+      d.f = f;
+      document.documentElement.style.setProperty('--panel-h', (f * 100).toFixed(1) + '%');
+    });
+    const end = e => {
+      if (!d || e.pointerId !== d.id) return;
+      const x = d; d = null;
+      if (!x.moved) { setPanelMin(!document.body.classList.contains('panel-min')); return; }
+      if (x.f < 0.16) { document.documentElement.style.setProperty('--panel-h', '48%'); setPanelMin(true); try { CM.store.pref('panelH', 0.48); } catch (er) {} return; }
+      setPanelMin(false);
+      try { CM.store.pref('panelH', x.f); } catch (er) {}
+    };
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+  })();
+
+  CM.ui = { grab, setPanelMin, el, icon, toast, openOverlay, dialog, confirmDialog, promptDialog, menu, closeOverlay, overlayOpen, numField, textField, selectField, segField, stat, tutorial };
 })(typeof window !== 'undefined' ? window : globalThis);

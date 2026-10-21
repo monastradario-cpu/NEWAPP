@@ -505,3 +505,21 @@ input, textarea, [contenteditable], .dialog p, .tips, .prob-text { -webkit-user-
 .v3d-tool .btn { flex-shrink: 0; }
 .v3d-panel .quick3d .mat-row { margin-bottom: 4px; }
 .v3d-tool .btn:not(.primary) { color: var(--ink); background: #fff; }
+
+/* Pannelli in basso: si alzano, si abbassano e si riducono (dito o mouse) */
+.sheet, .v3d-panel { max-height: var(--panel-h, 48%); }
+.sheet-grab { position: sticky; top: -8px; z-index: 3; display: flex; align-items: center; justify-content: center; width: auto; height: 30px; margin: -6px -16px 2px; padding: 0 16px; background: var(--surface); border-radius: 18px 18px 0 0; cursor: ns-resize; touch-action: none; }
+.sheet-grab i { width: 44px; height: 5px; border-radius: 5px; background: var(--line-2); }
+.sheet-grab:hover i { background: var(--muted); }
+.sheet-grab .grab-btn { position: absolute; right: 12px; top: 3px; font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 8px; border-radius: 8px; cursor: pointer; }
+.sheet-grab:hover .grab-btn { background: var(--sheet); color: var(--ink); }
+body.panel-min .sheet, body.panel-min .v3d-panel { max-height: 86px; overflow: hidden; }
+@media (min-width: 900px) {
+  .sheet .fields, .v3d-panel .fields { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .sheet .seg, .v3d-panel .seg { max-width: 760px; }
+}
+@media (orientation: landscape) and (max-height: 640px) {
+  .sheet, .v3d-panel { max-height: none; }
+  .sheet-grab { display: none; }
+  body.panel-min .sheet, body.panel-min .v3d-panel { max-height: none; overflow-y: auto; }
+}

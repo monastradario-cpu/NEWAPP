@@ -470,7 +470,7 @@
     if (!has) { lastRevealed = ''; if (in3d) view3d.setSelected(null); return; }
     const ctx = sheetCtx();
     const mut = ctx.mut;
-    sheet.appendChild(el('div', { class: 'sheet-grab', 'aria-hidden': 'true' }));
+    sheet.appendChild(U.grab());
 
     if (multi) {
       const n = P.setCount(multi);
@@ -1531,8 +1531,10 @@
     window.addEventListener('resize', () => { editor.resize(); if (project && tab === 'pianta') renderSheet(); });
 
     document.addEventListener('keydown', (e) => {
-      if ($('editor').classList.contains('hidden') || U.overlayOpen() || tab !== 'pianta') return;
+      if ($('editor').classList.contains('hidden') || U.overlayOpen() || (tab !== 'pianta' && !is3dEdit())) return;
       if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+      if (tab === '3d' && e.key === 'Escape') { if (v3dTool) endTool3d(); else editor.select({}); return; }
+      if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey && editor.sel.type === 'furniture') { editor.rotateSelected(e.shiftKey ? 15 : 90); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? editor.redo() : editor.undo(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); editor.redo(); }
       else if (e.key === 'Delete' || e.key === 'Backspace') editor.deleteSelection();
