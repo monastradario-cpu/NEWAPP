@@ -113,6 +113,7 @@
     /* ---------- Strumenti ---------- */
     setTool(tool, kind) {
       this.finishChain();
+      if (tool !== this.tool) this.lastPlaced = null;
       this.tool = tool;
       if (tool !== 'calibPick') this.calib = null;
       if (tool !== 'multi') this.multi = null;
@@ -439,6 +440,7 @@
     _pos(e) { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
 
     _down(e) {
+      if (e.pointerType === 'mouse' && e.button === 2) return; // tasto destro: menu
       this.canvas.setPointerCapture(e.pointerId);
       const pos = this._pos(e);
       this.pointers.set(e.pointerId, pos);
@@ -722,19 +724,30 @@
       this._emitHistory();
       this.draw();
     }
-    extPlaceFurniture(item, world) { this.pendingItem = item; this.at3d(() => this._placeFurniture(world)); this.pendingItem = null; }
+    // Nel 3D lo strumento resta attivo nella vista 3D; la pianta torna su "Seleziona"
+    _ext3dPlace(tool, fn) {
+      this.tool = tool;
+      this.at3d(fn);
+      const r = this.lastPlaced;
+      this.tool = 'select'; this.lastPlaced = null;
+      this._emitHint();
+      return r;
+    }
+    extPlaceFurniture(item, world) { this.pendingItem = item; const r = this._ext3dPlace('furniture', () => this._placeFurniture(world)); this.pendingItem = null; return r; }
     extPlaceOpening(kind, world) {
       const hit = this.at3d(() => this._nearestWall(world, 50));
-      if (!hit) return false;
+      if (!hit) return null;
       this.openingKind = kind;
-      this.at3d(() => this._placeOpening(world));
-      return true;
+      return this._ext3dPlace('opening', () => this._placeOpening(world));
     }
-    extPlaceFixture(kind, world) { this.fixtureKind = kind; this.at3d(() => this._placeFixture(world)); this.setTool('select'); }
+    extPlaceFixture(kind, world) { this.fixtureKind = kind; return this._ext3dPlace('fixture', () => this._placeFixture(world)); }
     extRect(a, b) {
       const st = 0.05;
       this.draft = { a: { x: G.snap(a.x, st), y: G.snap(a.y, st) }, b: { x: G.snap(b.x, st), y: G.snap(b.y, st) } };
       this.at3d(() => this._finishRect());
+      const r = this.sel.type === 'room' ? Object.assign({}, this.sel) : null;
+      if (r) this.select({});
+      return r;
     }
     extWallTap(world) {
       if (this.tool !== 'wall') this.setTool('wall');
@@ -857,9 +870,26 @@
       const sp = this.snapPoint(world, { walls: true });
       let cid;
       this.mutate(plan => { cid = CM.uid('c'); plan.columns[cid] = { x: CM.r3(sp.p.x), y: CM.r3(sp.p.y), w: 0.30, d: 0.30 }; }, 'column');
+      this._placed({ type: 'column', id: cid });
+    }
+
+    // Dopo un inserimento lo strumento resta attivo: si continua a inserire finché non premi Fine
+    _placed(sel) {
       this.draft = null;
+      this.lastPlaced = sel;
+      if (this.sel.type) this.select({});
+      this._emitHint();
+      this.draw();
+      if (this.hooks.onPlaced) this.hooks.onPlaced(sel);
+    }
+    editLastPlaced() {
+      const l = this.lastPlaced;
       this.setTool('select');
-      this.select({ type: 'column', id: cid });
+      if (l && this._selExistsFor(l)) this.select(l);
+    }
+    _selExistsFor(sel) {
+      const map = { wall: 'walls', room: 'rooms', opening: 'openings', column: 'columns', beam: 'beams', furniture: 'furniture', fixture: 'fixtures' }[sel.type];
+      return !!(map && this.plan[map][sel.id]);
     }
 
     _nearestWall(world, maxPx) {
@@ -894,8 +924,7 @@
         const dot = (world.x - g.c.x) * g.n.x + (world.y - g.c.y) * g.n.y;
         plan.openings[oid].flipSide = dot < 0;
       }, 'opening');
-      this.setTool('select');
-      this.select({ type: 'opening', id: oid });
+      this._placed({ type: 'opening', id: oid });
     }
 
     /* ---------- Arredo ---------- */
@@ -951,8 +980,7 @@
       const pos = this._furnitureSnap({ x: world.x, y: world.y, w: it.w, d: it.d, rot: 0 }, true);
       let fid;
       this.mutate(plan => { fid = P.addFurniture(plan, it, pos.x, pos.y, pos.rot); }, 'furniture');
-      this.setTool('select');
-      this.select({ type: 'furniture', id: fid });
+      this._placed({ type: 'furniture', id: fid });
       const w = this.warnings[fid];
       if (w && w.length && this.hooks.onToast) this.hooks.onToast(w[0]);
     }
@@ -990,9 +1018,7 @@
       const kind = this.fixtureKind;
       let id;
       this.mutate(plan => { id = P.addFixture(plan, kind, pos.x, pos.y); }, 'fixture');
-      this.draft = null;
-      this.select({ type: 'fixture', id });
-      this._emitHint();
+      this._placed({ type: 'fixture', id });
     }
 
     /* ---------- Planimetria di sfondo ---------- */

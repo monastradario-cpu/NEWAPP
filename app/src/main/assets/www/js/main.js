@@ -251,6 +251,7 @@
         U.toast(project.settings.newState === 'nuovo' ? 'I muri che disegni saranno “da costruire” (rossi)' : 'I muri che disegni saranno “esistenti” (neri)');
       }
     }));
+    if (window.innerWidth >= 1000) bar.appendChild(el('button', { class: 'chip' + (S.pref('split') ? ' active' : ''), title: 'Pianta e 3D affiancati (T)', html: U.icon('cube', 18) + '<span>Pianta + 3D</span>', onclick: toggleSplit }));
     const sub = $('subtools');
     sub.innerHTML = '';
     const showSub = editor.tool === 'opening' || editor.tool === 'fixture';
@@ -918,6 +919,8 @@
     $('view3dWrap').classList.toggle('hidden', id !== '3d');
     if (view3d) view3d.setVisible(id === '3d');
     if (id === 'pianta') { requestAnimationFrame(() => { editor.resize(); editor.draw(); }); }
+    closeCtx();
+    applySplit();
     if (!silent) renderTab();
   }
 
@@ -1018,8 +1021,8 @@
   let last3dHit = null, v3dTool = null, r3 = 0;
   function is3dEdit() { return tab === '3d' && !!view3d && !!view3d.editMode; }
   function schedule3d() {
-    if (!view3d || tab !== '3d' || r3) return;
-    r3 = requestAnimationFrame(() => { r3 = 0; if (view3d && tab === '3d') view3d.build(project); });
+    if (!view3d || !show3dNow() || r3) return;
+    r3 = requestAnimationFrame(() => { r3 = 0; if (view3d && show3dNow()) view3d.build(project); });
   }
   const hitToSel = (h) => !h ? {} : h.kind === 'floor' ? { type: 'room', id: h.room } : { type: h.kind, id: h.id };
   const selToHit = (sel) => {
@@ -1076,7 +1079,7 @@
     view3d.setTool({ type: t.type });
     const cancel = el('button', { class: 'btn small', text: 'Annulla', onclick: () => endTool3d() });
     if (t.type === 'chain') toolMsg('Tocca il pavimento punto per punto: ogni tocco alza un muro. Torna al primo punto per chiudere la stanza.', [el('button', { class: 'btn small primary', text: 'Fine', onclick: () => endTool3d() }), cancel]);
-    else toolMsg(t.msg, [cancel]);
+    else placedMsg(null);
   }
   function endTool3d(silent) {
     if (v3dTool && v3dTool.type === 'chain') { editor.finishChain(); editor.setTool('select'); }
@@ -1086,8 +1089,8 @@
     if (!silent && is3dEdit()) tip3d(null);
   }
 
-  async function add3d() {
-    const what = await U.menu('Aggiungi nel 3D', [
+  async function add3d(preset) {
+    const what = typeof preset === 'string' ? preset : await U.menu('Aggiungi nel 3D', [
       { id: 'furniture', label: 'Mobile o oggetto', icon: 'sofa' },
       { id: 'opening', label: 'Porta o finestra', icon: 'opening' },
       { id: 'room', label: 'Stanza (trascina sul pavimento)', icon: 'room' },
@@ -1115,6 +1118,17 @@
     }
   }
 
+  // Dopo ogni inserimento nel 3D lo strumento resta attivo
+  function placedMsg(r) {
+    if (!v3dTool) return;
+    v3dTool.last = r || v3dTool.last;
+    v3dTool.count = (v3dTool.count || 0) + (r ? 1 : 0);
+    const btns = [];
+    if (v3dTool.last) btns.push(el('button', { class: 'btn small', text: 'Modifica l’ultimo', onclick: () => { const l = v3dTool.last; endTool3d(); last3dHit = null; if (l) editor.select(l); } }));
+    btns.push(el('button', { class: 'btn small primary', text: 'Fine', onclick: () => endTool3d() }));
+    toolMsg((v3dTool.count ? 'Inseriti: ' + v3dTool.count + ' · ' : '') + v3dTool.msg + (v3dTool.count ? ' · tocca ancora per aggiungerne un altro' : ''), btns);
+  }
+
   function onPlace3d({ floor, hit }) {
     const t = v3dTool;
     if (!t) return;
@@ -1122,17 +1136,17 @@
     const onFloor = hit && hit.kind === 'floor' ? hit.point : floor;
     if (t.what === 'furniture') {
       if (!onFloor) return U.toast('Tocca un punto del pavimento');
-      editor.extPlaceFurniture(t.item, onFloor);
-      endTool3d();
+      placedMsg(editor.extPlaceFurniture(t.item, onFloor));
+      const w = t.last && editor.warnings[t.last.id]; if (w && w.length) U.toast(w[0]);
     } else if (t.what === 'opening') {
       const p = onWall || floor;
-      if (!p || !editor.extPlaceOpening(t.kind, p)) return U.toast('Tocca un muro');
-      endTool3d();
+      const r = p ? editor.extPlaceOpening(t.kind, p) : null;
+      if (!r) return U.toast('Tocca un muro');
+      placedMsg(r);
     } else if (t.what === 'fixture') {
       const p = onWall || (hit && hit.point) || floor;
       if (!p) return U.toast('Tocca un muro o il pavimento');
-      editor.extPlaceFixture(t.kind, p);
-      endTool3d();
+      placedMsg(editor.extPlaceFixture(t.kind, p));
     } else if (t.what === 'wall') {
       const p = (hit && hit.kind === 'wall' && hit.top ? hit.point : null) || floor;
       if (!p) return;
@@ -1181,19 +1195,19 @@
         onDragEnd: () => { editor.extDragEnd(); schedule3d(); },
         onDragCancel: () => { editor.extDragCancel(); schedule3d(); },
         onPlace: onPlace3d,
+        onContext: on3dContext,
         onRect: (a, b, final) => {
           if (!final) { view3d.showDraft({ rect: { a, b } }); return; }
           view3d.showDraft(null);
           if (Math.abs(b.x - a.x) < 0.5 || Math.abs(b.y - a.y) < 0.5) { U.toast('Trascina per una stanza di almeno 50 cm'); return; }
-          editor.extRect(a, b);
-          endTool3d();
-          U.toast('Stanza creata: misure, tipo e pavimento qui sotto');
+          placedMsg(editor.extRect(a, b));
         }
       });
       if (!view3d.init()) { U.toast('La vista 3D non è disponibile su questo dispositivo'); view3d = null; return; }
       view3d.editMode = !!S.pref('v3dEdit');
       build3dUi();
       new ResizeObserver(() => view3d && view3d.resize()).observe($('view3d'));
+      view3d.renderer.domElement.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { const r = view3d.renderer.domElement.getBoundingClientRect(); const w = view3d.floorAt(e.clientX - r.left, e.clientY - r.top, 0); if (w) mouseWorld = w; } });
       if (view3d.editMode) tip3d(EDIT_TIP);
     }
     view3d.setVisible(true);
@@ -1202,6 +1216,200 @@
     view3d.build(project);
     view3d.resize();
     if (view3d.editMode) renderSheet();
+  }
+
+  /* ---------- Comodità da PC: copia e incolla, menu col tasto destro, tasti rapidi, pianta + 3D affiancati ---------- */
+  let mouseWorld = null, ctxEl = null;
+  function show3dNow() { return tab === '3d' || $('editor').classList.contains('split'); }
+  function splitWanted() { return !!S.pref('split') && window.innerWidth >= 1000; }
+  function applySplit() {
+    const on = tab === 'pianta' && splitWanted();
+    const was = $('editor').classList.contains('split');
+    $('editor').classList.toggle('split', on);
+    if (on) { $('view3dWrap').classList.remove('hidden'); open3d(); }
+    else if (was && tab !== '3d') { $('view3dWrap').classList.add('hidden'); if (view3d) view3d.setVisible(false); }
+    if (on !== was) requestAnimationFrame(() => { editor.resize(); editor.draw(); if (view3d) view3d.resize(); });
+  }
+  function toggleSplit() {
+    S.pref('split', !S.pref('split'));
+    applySplit(); buildTools();
+    U.toast(S.pref('split') ? 'Pianta e 3D affiancati: ogni modifica si vede subito in entrambi' : 'Solo pianta');
+  }
+
+  // Gli elementi che fanno parte della selezione (una stanza porta con sé muri, porte, mobili e impianti)
+  function selSet(plan, sel) {
+    if (!sel || !sel.type) return null;
+    const set = { nodes: [], walls: [], rooms: [], furniture: [], fixtures: [], columns: [], beams: [] };
+    const node = (n) => { if (!set.nodes.includes(n)) set.nodes.push(n); };
+    if (sel.type === 'furniture' && plan.furniture[sel.id]) set.furniture.push(sel.id);
+    else if (sel.type === 'fixture' && plan.fixtures[sel.id]) set.fixtures.push(sel.id);
+    else if (sel.type === 'column' && plan.columns[sel.id]) set.columns.push(sel.id);
+    else if (sel.type === 'beam' && plan.beams[sel.id]) set.beams.push(sel.id);
+    else if (sel.type === 'wall' && plan.walls[sel.id]) { const w = plan.walls[sel.id]; node(w.a); node(w.b); set.walls.push(sel.id); }
+    else if (sel.type === 'room' && plan.rooms[sel.id]) {
+      const r = plan.rooms[sel.id];
+      r.nodes.forEach(node); set.rooms.push(sel.id);
+      P.roomWalls(plan, r).forEach(id => { const w = plan.walls[id]; if (!w) return; set.walls.push(id); node(w.a); node(w.b); });
+      for (const id in plan.furniture) if (P.roomOf(plan, plan.furniture[id]) === sel.id) set.furniture.push(id);
+      for (const id in plan.fixtures) if (P.roomOf(plan, plan.fixtures[id]) === sel.id) set.fixtures.push(id);
+    } else return null;
+    return set;
+  }
+  function selectPasted(out) {
+    const one = (k, t) => out[k].length === 1 && P.setCount(out) === 1 ? { type: t, id: out[k][0] } : null;
+    const s1 = one('furniture', 'furniture') || one('fixtures', 'fixture') || one('columns', 'column') || one('beams', 'beam') || one('walls', 'wall') ||
+      (out.rooms.length === 1 ? { type: 'room', id: out.rooms[0] } : null);
+    if (s1) { last3dHit = null; editor.setTool('select'); editor.select(s1); }
+    else { editor.setTool('multi'); editor.setMulti(out); }
+    buildTools(); renderSheet();
+  }
+  function copySel() {
+    const set = selSet(editor.plan, editor.sel);
+    if (!set) { U.toast(editor.sel.type === 'opening' ? 'Per porte e finestre usa Duplica (Ctrl+D)' : 'Seleziona prima qualcosa da copiare'); return; }
+    CM.clipboard = { plan: CM.clone(editor.plan), set: CM.clone(set) };
+    U.toast('Copiato · Ctrl+V per incollare dove c’è il mouse (anche in un altro progetto)');
+  }
+  function pasteAt(world) {
+    const c = CM.clipboard;
+    if (!c) { U.toast('Niente da incollare: copia prima qualcosa (Ctrl+C)'); return; }
+    const bb = P.setBounds(c.plan, c.set);
+    if (!bb) return;
+    let dx = 0.5, dy = 0.5;
+    if (world) { dx = world.x - (bb.x0 + bb.x1) / 2; dy = world.y - (bb.y0 + bb.y1) / 2; }
+    dx = CM.r3(Math.round(dx / 0.05) * 0.05); dy = CM.r3(Math.round(dy / 0.05) * 0.05);
+    let out; editor.mutate(pl => { out = P.copySet(c.plan, pl, c.set, dx, dy); }, 'paste');
+    selectPasted(out);
+    U.toast('Incollato');
+  }
+  function duplicateSel() {
+    const sel = editor.sel, plan = editor.plan;
+    if (sel.type === 'opening' && plan.openings[sel.id]) {
+      let nid; editor.mutate(pl => { const o = pl.openings[sel.id]; nid = CM.uid('o'); pl.openings[nid] = Object.assign(CM.clone(o), { pos: CM.r3(o.pos + o.w + 0.2) }); P.clampOpening(pl, nid); }, 'duplicate');
+      editor.select({ type: 'opening', id: nid }); return;
+    }
+    const set = selSet(plan, sel);
+    if (!set) { U.toast('Seleziona prima qualcosa da duplicare'); return; }
+    let dx = 0.4, dy = 0.4;
+    if (sel.type === 'room' || sel.type === 'wall') { const bb = P.setBounds(plan, set), all = P.bounds(Object.assign({}, plan, { underlay: null })); dx = all && bb ? CM.r3(all.maxX + 0.6 - bb.x0) : 1; dy = 0; }
+    let out; editor.mutate(pl => { out = P.copySet(pl, pl, set, dx, dy); }, 'duplicate');
+    selectPasted(out);
+    U.toast(sel.type === 'room' ? 'Stanza duplicata a destra della casa: trascinala dove vuoi' : 'Duplicato');
+  }
+  function nudgeSel(dx, dy) {
+    const sel = editor.sel;
+    if (!sel.type) return false;
+    editor.mutate(pl => {
+      const o = sel.type === 'furniture' ? pl.furniture[sel.id] : sel.type === 'fixture' ? pl.fixtures[sel.id] : sel.type === 'column' ? pl.columns[sel.id] : null;
+      if (o) { o.x = CM.r3(o.x + dx); o.y = CM.r3(o.y + dy); return; }
+      if (sel.type === 'opening' && pl.openings[sel.id]) { const op = pl.openings[sel.id]; op.pos = CM.r3(op.pos + (Math.abs(dx) > Math.abs(dy) ? dx : dy)); P.clampOpening(pl, sel.id); return; }
+      const set = selSet(pl, sel); if (set) P.translateSet(pl, set, dx, dy);
+    }, 'nudge');
+    return true;
+  }
+
+  function closeCtx() { if (ctxEl) ctxEl.remove(); ctxEl = null; document.removeEventListener('pointerdown', ctxOutside, true); }
+  function ctxOutside(e) { if (ctxEl && !ctxEl.contains(e.target)) closeCtx(); }
+  function ctxMenu(x, y, title, items) {
+    closeCtx();
+    const m = el('div', { class: 'ctx-menu', role: 'menu' }, [title ? el('div', { class: 'ctx-title', text: title }) : null].concat(items.filter(Boolean).map(it => it === '-' ? el('div', { class: 'ctx-sep' }) :
+      el('button', { role: 'menuitem', class: it.danger ? 'danger' : '', html: (it.icon ? U.icon(it.icon, 16) : '<i class="ctx-ic"></i>') + '<span class="grow">' + it.label + '</span>' + (it.key ? '<kbd>' + it.key + '</kbd>' : ''), onclick: () => { closeCtx(); it.run(); } }))));
+    document.body.appendChild(m);
+    const r = m.getBoundingClientRect();
+    m.style.left = Math.max(6, Math.min(x, window.innerWidth - r.width - 6)) + 'px';
+    m.style.top = Math.max(6, Math.min(y, window.innerHeight - r.height - 6)) + 'px';
+    ctxEl = m;
+    setTimeout(() => document.addEventListener('pointerdown', ctxOutside, true), 0);
+  }
+  const SEL_NAMES = { furniture: 'Mobile', fixture: 'Impianto', room: 'Stanza', wall: 'Muro', opening: 'Porta o finestra', column: 'Pilastro', beam: 'Trave' };
+  function contextFor(sel, world, x, y) {
+    const plan = editor.plan, items = [];
+    let title = '';
+    if (sel && sel.type) {
+      const o = { furniture: plan.furniture, fixture: plan.fixtures, room: plan.rooms, opening: plan.openings }[sel.type];
+      const obj = o && o[sel.id];
+      title = (SEL_NAMES[sel.type] || '') + (obj && obj.name ? ': ' + obj.name : sel.type === 'opening' && obj ? ': ' + CM.OPENINGS[obj.kind].label : '');
+      const pick = () => { if (editor.sel.type !== sel.type || editor.sel.id !== sel.id) editor.select(sel); };
+      items.push({ label: 'Proprietà', icon: 'rename', run: () => { U.setPanelMin(false); pick(); renderSheet(); } });
+      if (sel.type === 'furniture') {
+        items.push({ label: 'Ruota di 90°', key: 'R', run: () => { pick(); editor.rotateSelected(90); } });
+        items.push({ label: 'Ruota di 15°', key: 'Maiusc+R', run: () => { pick(); editor.rotateSelected(15); } });
+      }
+      items.push({ label: 'Duplica', key: 'Ctrl+D', icon: 'copy', run: () => { pick(); duplicateSel(); } });
+      if (sel.type !== 'opening') items.push({ label: 'Copia', key: 'Ctrl+C', run: () => { pick(); copySel(); } });
+      if (sel.type === 'room') items.push({ label: 'Stile della stanza', icon: 'spark', run: () => CM.personal.styleGallery(persCtx(sel.id)) });
+      items.push('-');
+      items.push({ label: 'Elimina', key: 'Canc', icon: 'trash', danger: true, run: () => { pick(); editor.deleteSelection(); U.toast('Eliminato · puoi annullare (Ctrl+Z)'); } });
+    } else {
+      title = 'Qui';
+      if (CM.clipboard && world) items.push({ label: 'Incolla qui', key: 'Ctrl+V', icon: 'copy', run: () => pasteAt(world) });
+      if (world) items.push({ label: 'Aggiungi un mobile qui', icon: 'sofa', run: async () => { const it = await CM.tabs.pickItem(); if (!it) return; const r = editor.extPlaceFurniture(it, world); if (r) { last3dHit = null; editor.select(r); } } });
+      if (world) items.push({ label: 'Aggiungi luce o presa qui', icon: 'plug', run: async () => { const k = await U.menu('Luce, presa o impianto', Object.keys(CM.FIXTURES).map(id => ({ id, label: CM.FIXTURES[id].label, icon: 'plug' }))); if (!k) return; const r = editor.extPlaceFixture(k, world); if (r) { last3dHit = null; editor.select(r); } } });
+      items.push('-');
+      items.push({ label: 'Tasti rapidi', key: '?', icon: 'help', run: shortcutsDialog });
+    }
+    ctxMenu(x, y, title, items);
+  }
+  function onPlanContext(e) {
+    e.preventDefault();
+    if (!['select', 'multi'].includes(editor.tool)) { editor.setTool('select'); buildTools(); renderSheet(); U.toast('Fine'); return; }
+    const r = $('planCanvas').getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+    const h = editor.hitTest(sx, sy);
+    const sel = h && h.id && !['node', 'pin'].includes(h.type) ? { type: h.type, id: h.id } : null;
+    contextFor(sel, editor.toWorld(sx, sy), e.clientX, e.clientY);
+  }
+  function on3dContext(hit, floor, x, y) {
+    if (v3dTool) { endTool3d(); U.toast('Fine'); return; }
+    last3dHit = hit;
+    contextFor(hit ? hitToSel(hit) : null, hit && hit.kind === 'floor' ? hit.point : floor, x, y);
+  }
+
+  function shortcutsDialog() {
+    const rows = [
+      ['Generali', ''], ['Ctrl+Z / Ctrl+Y', 'Annulla / Ripeti'], ['1 … 5', 'Pianta, 3D, Arredo, Costi, Lavori'], ['?', 'Questo elenco'], ['Esc', 'Chiudi, smetti di inserire'],
+      ['Oggetto selezionato', ''], ['Canc', 'Elimina'], ['Ctrl+C / Ctrl+V', 'Copia / Incolla dove c’è il mouse'], ['Ctrl+D', 'Duplica'], ['R / Maiusc+R', 'Ruota di 90° / 15°'], ['Frecce', 'Sposta di 5 cm (con Maiusc: 1 cm)'],
+      ['Strumenti (pianta e 3D in Modifica)', ''], ['V', 'Seleziona'], ['S', 'Stanza'], ['M', 'Muri'], ['P', 'Porte e finestre'], ['A', 'Arredo'], ['I', 'Luci e impianti'], ['F', 'Inquadra tutta la casa'], ['T', 'Pianta e 3D affiancati'],
+      ['Mouse', ''], ['Tasto destro', 'Menu dell’oggetto (o “Fine” mentre inserisci)'], ['Rotella', 'Zoom'], ['3D: sinistro / destro', 'Gira / sposta la vista']
+    ];
+    const body = el('div', { class: 'keys' }, rows.map(([k, v]) => v === '' ? el('div', { class: 'sec-title', text: k }) : el('div', { class: 'key-row' }, [el('kbd', { text: k }), el('span', { text: v })])));
+    U.dialog({ title: 'Tasti rapidi', body });
+  }
+
+  function onKey(e) {
+    if (U.overlayOpen() && e.key === 'Escape') { U.closeOverlay(); return; }
+    if ($('editor').classList.contains('hidden') || U.overlayOpen()) return;
+    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    const key = e.key, low = key.length === 1 ? key.toLowerCase() : key, ctrl = e.ctrlKey || e.metaKey;
+    if (key === 'Escape' && ctxEl) { closeCtx(); return; }
+    if (key === '?' || key === 'F1') { e.preventDefault(); shortcutsDialog(); return; }
+    if (!ctrl && !e.altKey && /^[1-5]$/.test(key)) { closeCtx(); setTab(['pianta', '3d', 'arredo', 'costi', 'lavori'][+key - 1]); return; }
+    const in3 = is3dEdit(), inPlan = tab === 'pianta';
+    if (!inPlan && !in3) return;
+    if (ctrl && low === 'z') { e.preventDefault(); e.shiftKey ? editor.redo() : editor.undo(); return; }
+    if (ctrl && low === 'y') { e.preventDefault(); editor.redo(); return; }
+    if (ctrl && low === 'c') { e.preventDefault(); copySel(); return; }
+    if (ctrl && low === 'v') { e.preventDefault(); pasteAt(mouseWorld); return; }
+    if (ctrl && low === 'd') { e.preventDefault(); duplicateSel(); return; }
+    if (ctrl || e.altKey) return;
+    if (key === 'Delete' || key === 'Backspace') { if (editor.sel.type) { e.preventDefault(); editor.deleteSelection(); } return; }
+    if (key === 'Escape') {
+      if (in3) { if (v3dTool) endTool3d(); else editor.select({}); return; }
+      if (editor.tool !== 'select') { editor.setTool('select'); buildTools(); renderSheet(); return; }
+      return CM.onBack();
+    }
+    if (low === 'r' && editor.sel.type === 'furniture') { editor.rotateSelected(e.shiftKey ? 15 : 90); return; }
+    const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    if (arrows[key] && editor.sel.type) { e.preventDefault(); const st = e.shiftKey ? 0.01 : 0.05; nudgeSel(arrows[key][0] * st, arrows[key][1] * st); return; }
+    if (low === 't') { toggleSplit(); return; }
+    if (in3) {
+      const m = { s: 'room', m: 'wall', p: 'opening', a: 'furniture', i: 'fixture' }[low];
+      if (m) { endTool3d(true); add3d(m); return; }
+      if (low === 'v') { endTool3d(); return; }
+      if (low === 'f') { view3d.resetCamera(); return; }
+      return;
+    }
+    const tl = { v: 'select', s: 'room', m: 'wall', p: 'opening', a: 'furniture', i: 'fixture' }[low];
+    if (tl) { toolClick(tl); return; }
+    if (low === 'f') editor.fit();
   }
 
   /* ---------- Menu del progetto ---------- */
@@ -1452,7 +1660,10 @@
         box.innerHTML = '';
         if (actions.includes('undoPoint')) box.appendChild(el('button', { text: 'Annulla punto', onclick: () => editor.undoPoint() }));
         if (actions.includes('finish')) box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => editor.finishChain() }));
-        if (editor.tool === 'fixture') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
+        if (['fixture', 'opening', 'furniture', 'column'].includes(editor.tool)) {
+          if (editor.lastPlaced) box.appendChild(el('button', { text: 'Modifica l\u2019ultimo', onclick: () => { editor.editLastPlaced(); buildTools(); } }));
+          box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
+        }
         if (editor.tool === 'room') box.appendChild(el('button', { class: 'primary', text: 'Con le misure', onclick: () => roomByMeasures() }));
         if (editor.tool === 'erase') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); buildTools(); } }));
         if (editor.tool === 'cropUnderlay') box.appendChild(el('button', { text: 'Salta', onclick: () => { editor.setTool('select'); buildTools(); autoCalibrate(); } }));
@@ -1463,6 +1674,7 @@
         }
         if (editor.tool === 'calibrate' || editor.tool === 'moveUnderlay') box.appendChild(el('button', { class: 'primary', text: 'Fine', onclick: () => { editor.setTool('select'); sheetMode = 'underlay'; buildTools(); renderSheet(); } }));
       },
+      onPlaced: () => { if (tab === 'pianta') U.toast('Inserito \u00b7 tocca ancora per aggiungerne un altro, \u201cFine\u201d per smettere'); },
       onHistory: (u, r) => { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
       onToast: (t) => U.toast(t),
       onDraw: (view) => updateScale(view),
@@ -1530,16 +1742,10 @@
     new ResizeObserver(() => editor.resize()).observe($('stage'));
     window.addEventListener('resize', () => { editor.resize(); if (project && tab === 'pianta') renderSheet(); });
 
-    document.addEventListener('keydown', (e) => {
-      if ($('editor').classList.contains('hidden') || U.overlayOpen() || (tab !== 'pianta' && !is3dEdit())) return;
-      if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
-      if (tab === '3d' && e.key === 'Escape') { if (v3dTool) endTool3d(); else editor.select({}); return; }
-      if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey && editor.sel.type === 'furniture') { editor.rotateSelected(e.shiftKey ? 15 : 90); return; }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? editor.redo() : editor.undo(); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); editor.redo(); }
-      else if (e.key === 'Delete' || e.key === 'Backspace') editor.deleteSelection();
-      else if (e.key === 'Escape') CM.onBack();
-    });
+    document.addEventListener('keydown', onKey);
+    $('planCanvas').addEventListener('contextmenu', onPlanContext);
+    $('planCanvas').addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { const r = $('planCanvas').getBoundingClientRect(); mouseWorld = editor.toWorld(e.clientX - r.left, e.clientY - r.top); } });
+    window.addEventListener('resize', () => { if (project) applySplit(); });
     // Tastiera del telefono: quando si apre la finestra si accorcia
     let maxH = window.innerHeight;
     const kbCheck = () => {

@@ -523,3 +523,21 @@ body.panel-min .sheet, body.panel-min .v3d-panel { max-height: 86px; overflow: h
   .sheet-grab { display: none; }
   body.panel-min .sheet, body.panel-min .v3d-panel { max-height: none; overflow-y: auto; }
 }
+
+/* Menu col tasto destro e tasti rapidi (PC) */
+.ctx-menu { position: fixed; z-index: 60; min-width: 230px; max-width: 320px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(27,30,34,0.18); padding: 6px; display: flex; flex-direction: column; }
+.ctx-menu .ctx-title { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); padding: 6px 10px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-menu button { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border: none; background: transparent; border-radius: 8px; font-size: 14px; color: var(--ink); text-align: left; cursor: pointer; }
+.ctx-menu button:hover { background: var(--sheet); }
+.ctx-menu button.danger { color: #C0392B; }
+.ctx-menu .grow { flex: 1; }
+.ctx-menu .ctx-ic { width: 16px; display: inline-block; }
+.ctx-menu kbd, .key-row kbd { font: 500 11px var(--mono); color: var(--muted); background: var(--sheet); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; white-space: nowrap; }
+.ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+.keys { display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow-y: auto; }
+.key-row { display: grid; grid-template-columns: 170px 1fr; gap: 10px; align-items: center; font-size: 14px; }
+.key-row kbd { justify-self: start; font-size: 12px; padding: 2px 7px; color: var(--ink); }
+
+/* Pianta e 3D affiancati (schermi larghi) */
+#editor.split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "top top" "tools tools" "stage v3d" "summary summary" "tabs tabs"; }
+#editor.split .view3d-wrap { grid-area: v3d; border-left: 1px solid var(--line); }

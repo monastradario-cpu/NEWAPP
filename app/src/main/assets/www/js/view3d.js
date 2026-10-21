@@ -1001,7 +1001,15 @@
         }
         if (H.onPick) H.onPick(hit);
       };
-      el.addEventListener('contextmenu', e => e.preventDefault());
+      el.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        const d = this._rdown; this._rdown = null;
+        if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return; // era uno spostamento col tasto destro
+        if (!H.onContext) return;
+        const p = pos(e);
+        H.onContext(this.pick(p.x, p.y), this.floorAt(p.x, p.y, 0), e.clientX, e.clientY);
+      });
+      el.addEventListener('mousedown', e => { if (e.button === 2) this._rdown = { x: e.clientX, y: e.clientY }; });
       el.addEventListener('pointerup', up);
       el.addEventListener('pointercancel', up);
       el.addEventListener('wheel', e => { e.preventDefault(); if (this.mode === 'orbit') { this.orbit.r = Math.max(2, Math.min(120, this.orbit.r * Math.exp(e.deltaY * 0.001))); this.dirty = true; } }, { passive: false });
