@@ -367,6 +367,43 @@
     return id2;
   };
 
+  // Aggiunge un angolo in un muro (lo divide in due tratti con un vertice da trascinare)
+  P.addCorner = function (plan, wid, t) {
+    const w = plan.walls[wid];
+    if (!w) return null;
+    const A = plan.nodes[w.a], B = plan.nodes[w.b];
+    const k = t == null ? 0.5 : Math.max(0.05, Math.min(0.95, t));
+    const nid = P.addNode(plan, A.x + (B.x - A.x) * k, A.y + (B.y - A.y) * k);
+    const a = w.a, b = w.b;
+    P.splitWall(plan, wid, nid);
+    // le stanze che avevano quel lato prendono il nuovo vertice, così il pavimento segue il muro
+    for (const rid in plan.rooms) {
+      const ns = plan.rooms[rid].nodes, n = ns.length;
+      for (let i = 0; i < n; i++) { const p = ns[i], q = ns[(i + 1) % n]; if ((p === a && q === b) || (p === b && q === a)) { ns.splice(i + 1, 0, nid); break; } }
+    }
+    return nid;
+  };
+  // Toglie un angolo: i due tratti tornano un muro dritto
+  P.removeCorner = function (plan, nid) {
+    const ws = P.wallsOfNode(plan, nid);
+    if (ws.length !== 2) return false;
+    const [i1, i2] = ws, w1 = plan.walls[i1], w2 = plan.walls[i2];
+    const o1 = w1.a === nid ? w1.b : w1.a, o2 = w2.a === nid ? w2.b : w2.a;
+    if (o1 === o2) return false;
+    const L1 = P.wallLen(plan, w1), L2 = P.wallLen(plan, w2);
+    for (const oid in plan.openings) {
+      const op = plan.openings[oid];
+      if (op.wall === i1 && w1.a === nid) op.pos = r3(L1 - op.pos);
+      if (op.wall === i2) { op.pos = r3(L1 + (w2.a === nid ? op.pos : L2 - op.pos)); op.wall = i1; }
+    }
+    w1.a = o1; w1.b = o2;
+    delete plan.walls[i2];
+    for (const rid in plan.rooms) plan.rooms[rid].nodes = plan.rooms[rid].nodes.filter(x => x !== nid);
+    delete plan.nodes[nid];
+    for (const oid in plan.openings) P.clampOpening(plan, oid);
+    return true;
+  };
+
   P.getOrCreateNode = function (plan, x, y) {
     const existing = P.nodeAt(plan, x, y);
     if (existing) return existing;

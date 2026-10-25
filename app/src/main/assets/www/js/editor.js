@@ -173,6 +173,7 @@
       else if (sel.type === 'furniture' && plan.furniture[sel.id]) pts = P.furnitureCorners(plan.furniture[sel.id]);
       else if (sel.type === 'fixture' && plan.fixtures[sel.id]) { const f = plan.fixtures[sel.id]; pts = [{ x: f.x - 0.4, y: f.y - 0.4 }, { x: f.x + 0.4, y: f.y + 0.4 }]; }
       else if (sel.type === 'wall' && plan.walls[sel.id]) pts = P.wallEnds(plan, plan.walls[sel.id]);
+      else if (sel.type === 'node' && plan.nodes[sel.id]) { const n = plan.nodes[sel.id]; pts = [{ x: n.x - 0.15, y: n.y - 0.15 }, { x: n.x + 0.15, y: n.y + 0.15 }]; }
       else if (sel.type === 'opening' && plan.openings[sel.id]) {
         const op = plan.openings[sel.id], g = P.openingGeom(plan, op);
         if (g) pts = [{ x: g.c.x - g.u.x * op.w, y: g.c.y - g.u.y * op.w }, { x: g.c.x + g.u.x * op.w, y: g.c.y + g.u.y * op.w },
@@ -207,6 +208,7 @@
     }
 
     _handleNodes() {
+      if (this.sel.type === 'node' && this.plan.nodes[this.sel.id]) return [this.sel.id];
       if (this.sel.type === 'wall' && this.plan.walls[this.sel.id]) {
         const w = this.plan.walls[this.sel.id]; return [w.a, w.b];
       }
@@ -263,7 +265,7 @@
     _emitHistory() { if (this.hooks.onHistory) this.hooks.onHistory(this.canUndo(), this.canRedo()); }
 
     _selExists() {
-      const map = { wall: 'walls', room: 'rooms', opening: 'openings', column: 'columns', beam: 'beams', furniture: 'furniture', fixture: 'fixtures' }[this.sel.type];
+      const map = { wall: 'walls', room: 'rooms', opening: 'openings', column: 'columns', beam: 'beams', furniture: 'furniture', fixture: 'fixtures', node: 'nodes' }[this.sel.type];
       return map && this.plan[map][this.sel.id];
     }
 

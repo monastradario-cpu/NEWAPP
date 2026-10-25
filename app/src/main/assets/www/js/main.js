@@ -463,7 +463,8 @@
     const scroll = sheet.scrollTop;
     sheet.innerHTML = '';
     const multi = editor.tool === 'multi' && editor.multi;
-    const has = sheetMode === 'underlay' || (sel.type && sel.type !== 'node') || !!multi;
+    const nodeSheet = sel.type === 'node' && plan.nodes[sel.id] && P.wallsOfNode(plan, sel.id).length === 2;
+    const has = sheetMode === 'underlay' || (sel.type && (sel.type !== 'node' || nodeSheet)) || !!multi;
     sheet.classList.toggle('hidden', !has);
     if (!in3d) {
       $('stage').classList.toggle('with-sheet', !!has);
@@ -540,6 +541,27 @@
         el('button', { class: 'btn', text: 'Foto / diario', onclick: () => CM.tabs.addDiary({ room: sel.id }) }),
         el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina stanza', onclick: () => { editor.deleteSelection(); U.toast('Stanza eliminata · puoi annullare'); } })
       ]));
+    } else if (nodeSheet) {
+      // Angolo di un muro: si trascina il pallino, oppure si scrivono le misure
+      const [i1, i2] = P.wallsOfNode(plan, sel.id), w1 = plan.walls[i1], w2 = plan.walls[i2];
+      const N = plan.nodes[sel.id], O1 = plan.nodes[w1.a === sel.id ? w1.b : w1.a], O2 = plan.nodes[w2.a === sel.id ? w2.b : w2.a];
+      const L = CM.geom.dist(O1, O2) || 1, ux = (O2.x - O1.x) / L, uy = (O2.y - O1.y) / L;
+      const along = (N.x - O1.x) * ux + (N.y - O1.y) * uy, off = -(N.x - O1.x) * uy + (N.y - O1.y) * ux;
+      const ang = (a, b) => Math.atan2(b.y - N.y, b.x - N.x) - Math.atan2(a.y - N.y, a.x - N.x);
+      let deg = Math.abs(ang(O1, O2) * 180 / Math.PI); if (deg > 180) deg = 360 - deg;
+      sheet.appendChild(sheetHead('Angolo del muro', Math.round(deg) + '\u00b0'));
+      sheet.appendChild(el('p', { class: 'muted small', style: 'margin:0 0 4px', text: 'Trascina il pallino blu per piegare il muro, oppure scrivi le misure. 180\u00b0 = muro dritto.' }));
+      const setPos = (a, o) => mut(pl => { const n = pl.nodes[sel.id]; n.x = CM.r3(O1.x + ux * a - uy * o); n.y = CM.r3(O1.y + uy * a + ux * o); }, 'corner');
+      const f = el('div', { class: 'fields' });
+      f.appendChild(U.numField('Sporgenza dell’angolo', off, 'cm', v => setPos(along, v), { min: -20, max: 20 }));
+      f.appendChild(U.numField('Distanza dal primo capo', along, 'm', v => setPos(v, off), { min: 0, max: 100 }));
+      f.appendChild(U.numField('Primo tratto', CM.geom.dist(O1, N), 'm', v => { const k = v / (CM.geom.dist(O1, N) || 1); setPos(along * k, off * k); }, { min: 0.05, max: 100 }));
+      f.appendChild(U.numField('Secondo tratto', CM.geom.dist(O2, N), 'm', v => { const d2 = CM.geom.dist(O2, N) || 1, k = v / d2; const a2 = L - along; setPos(L - a2 * k, off * k); }, { min: 0.05, max: 100 }));
+      sheet.appendChild(f);
+      sheet.appendChild(el('div', { class: 'actions' }, [
+        el('button', { class: 'btn', text: 'Raddrizza (togli l’angolo)', onclick: () => { editor.mutate(pl => P.removeCorner(pl, sel.id), 'corner'); editor.select({}); U.toast('Muro di nuovo dritto'); } }),
+        el('button', { class: 'btn', text: 'Angolo a 90\u00b0', onclick: () => { const h = L / 2; setPos(h, off >= 0 ? h : -h); } })
+      ]));
     } else if (sel.type === 'wall' && plan.walls[sel.id]) {
       const w = plan.walls[sel.id];
       const L = P.wallLen(plan, w);
@@ -601,6 +623,7 @@
         U.stat('Netta, due facce', CM.fmt.area(wsf.net * 2)), U.stat('Aperture', ops + ' · ' + CM.fmt.area(wsf.openings))
       ]));
       sheet.appendChild(el('div', { class: 'actions' }, [
+        el('button', { class: 'btn primary', text: '+ Aggiungi un angolo', onclick: () => addCorner(sel.id) }),
         el('button', { class: 'btn', text: 'Vista frontale (prospetto)', onclick: () => CM.elevation && CM.elevation.open(editor.plan, sel.id) }),
         el('button', { class: 'btn', text: 'Curva il muro', onclick: async () => {
           const v = await U.promptDialog('Muro ad arco', '50', { label: 'Freccia (quanto sporge al centro)', unit: 'cm', inputmode: 'decimal', mono: true, text: 'Il muro diventa un arco che sporge verso l\u2019esterno della misura scritta. Con un numero negativo rientra verso la stanza. Le porte e finestre su questo muro vanno rimesse.', ok: 'Curva' });
@@ -1309,6 +1332,17 @@
     } else return null;
     return set;
   }
+  // Muro angolare: aggiunge un vertice a metà (o dove hai toccato) e lo seleziona per piegarlo
+  function addCorner(wid) {
+    const w = editor.plan.walls[wid]; if (!w) return;
+    let t = 0.5;
+    const A = editor.plan.nodes[w.a], B = editor.plan.nodes[w.b];
+    if (mouseWorld) { const pr = CM.geom.projSeg(mouseWorld, A, B); if (pr.d < 0.4 && pr.t > 0.1 && pr.t < 0.9) t = pr.t; }
+    let nid; editor.mutate(pl => { nid = P.addCorner(pl, wid, t); }, 'corner');
+    editor.select({ type: 'node', id: nid });
+    U.toast('Trascina il pallino blu per piegare il muro');
+  }
+
   // Elimina il tratto, la parete intera o il muro di una sola stanza (il tratto in comune resta all'altra stanza)
   function deleteWallScope(scope, targets) {
     if (scope === 'one') { editor.deleteSelection(); U.toast('Muro eliminato \u00b7 puoi annullare'); return; }
@@ -1363,6 +1397,14 @@
         { icon: 'trash', t: 'Elimina', danger: true, run: () => editor.deleteSelection() }
       ].filter(Boolean);
     }
+    if (sel.type === 'wall') return [
+      { icon: 'wall', t: 'Aggiungi un angolo (muro angolare)', run: () => addCorner(sel.id) },
+      { icon: 'rotate', t: 'Curva il muro', run: () => { const b = [...$('sheet').querySelectorAll('button')].find(x => /Curva il muro/.test(x.textContent)); if (b) b.click(); } },
+      { icon: 'trash', t: 'Elimina', danger: true, run: () => { editor.deleteSelection(); U.toast('Muro eliminato \u00b7 puoi annullare'); } }
+    ];
+    if (sel.type === 'node' && P.wallsOfNode(plan, sel.id).length === 2) return [
+      { icon: 'trash', t: 'Togli l\u2019angolo', danger: true, run: () => { editor.mutate(pl => P.removeCorner(pl, sel.id), 'corner'); editor.select({}); } }
+    ];
     if (sel.type === 'fixture' || sel.type === 'column') return [
       { icon: 'copy', t: 'Duplica', run: duplicateSel },
       { icon: 'trash', t: 'Elimina', danger: true, run: () => editor.deleteSelection() }
