@@ -308,10 +308,16 @@
       this._raf = requestAnimationFrame(() => {
         this._raf = 0;
         if (!this.visible || document.hidden) return;
-        const moving = this.mode === 'walk' && (this.walk.move.x || this.walk.move.y);
-        if (moving) this._stepWalk();
+        // movimento a tempo: stessa velocità anche se il dispositivo disegna meno fotogrammi
+        const now = performance.now();
+        this._dt = Math.min(6, Math.max(0.5, this._tLast ? (now - this._tLast) / 16.7 : 1));
+        this._tLast = now;
+        const kb = this._keyStep();
+        const moving = kb || (this.mode === 'walk' && (this.walk.move.x || this.walk.move.y)) || this._fly;
+        if (this._fly) this._flyStep();
+        else if (this.mode === 'walk' && (this.walk.move.x || this.walk.move.y)) this._stepWalk();
         if (this.dirty || moving) { this.dirty = false; this._render(); }
-        if (moving) this._kick();
+        if (moving) this._kick(); else this._tLast = 0;
       });
     }
 
@@ -1666,8 +1672,90 @@
     // Movimento con il joystick (x: laterale, y: avanti)
     setMove(x, y) { this.walk.move = { x, y }; this._kick(); }
 
+    /* ---------- Tastiera del PC: frecce (o W A S D) per muoversi ---------- */
+    // k = e.code del tasto; restituisce true se il tasto è stato usato
+    key(k, down, shift) {
+      const map = { ArrowUp: 'f', ArrowDown: 'b', ArrowLeft: 'l', ArrowRight: 'r', KeyW: 'f', KeyS: 'b', KeyA: 'l', KeyD: 'r', KeyQ: 'sl', KeyE: 'sr', Equal: 'in', NumpadAdd: 'in', BracketRight: 'in', Minus: 'out', NumpadSubtract: 'out', Slash: 'out' };
+      const m = map[k];
+      if (!m) return false;
+      this.keys = this.keys || {};
+      if (down) this.keys[m] = true; else delete this.keys[m];
+      this._run = !!shift;
+      this._kick();
+      return true;
+    }
+    clearKeys() { this.keys = {}; }
+    _keyStep() {
+      const K = this.keys;
+      if (!K || !Object.keys(K).length) return false;
+      const run = this._run ? 2 : 1, dt = this._dt || 1;
+      if (this.mode === 'walk') {
+        const turn = (K.r ? 1 : 0) - (K.l ? 1 : 0), fwd = (K.f ? 1 : 0) - (K.b ? 1 : 0), side = (K.sr ? 1 : 0) - (K.sl ? 1 : 0);
+        this.walk.yaw += turn * 0.035 * dt;
+        if (fwd || side) { const mv = this.walk.move; this.walk.move = { x: side * run, y: fwd * run }; this._stepWalk(); this.walk.move = mv; }
+      } else {
+        this.orbit.theta += ((K.r ? 1 : 0) - (K.l ? 1 : 0)) * 0.03 * run * dt;
+        this.orbit.phi = Math.max(0.12, Math.min(1.5, this.orbit.phi + ((K.b ? 1 : 0) - (K.f ? 1 : 0)) * 0.02 * run * dt));
+        if (K.in || K.out) this.orbit.r = Math.max(2, Math.min(120, this.orbit.r * Math.pow(K.in ? 0.97 : 1.03, dt)));
+      }
+      this.dirty = true;
+      return true;
+    }
+
+    /* ---------- Da stanza a stanza ---------- */
+    rooms() {
+      const plan = this.plan;
+      if (!plan) return [];
+      return Object.keys(plan.rooms).filter(id => P.roomPts(plan, plan.rooms[id]).length >= 3).map(id => ({ id, name: plan.rooms[id].name, outdoor: CM.roomType(plan.rooms[id].type).outdoor }))
+        .sort((a, b) => (a.outdoor ? 1 : 0) - (b.outdoor ? 1 : 0));
+    }
+    // Il punto della stanza in cui ci si trova
+    currentRoom() { return this.plan ? P.roomOf(this.plan, { x: this.walk.x, y: this.walk.z }) : null; }
+    goRoom(rid) {
+      const plan = this.plan, room = plan && plan.rooms[rid];
+      if (!room) return;
+      const pts = P.roomPts(plan, room);
+      const c = G.labelPoint(pts);
+      // si guarda verso il lato più lontano della stanza
+      let best = 0, yaw = this.walk.yaw;
+      for (let a = 0; a < 16; a++) {
+        const ang = a / 16 * Math.PI * 2, dx = Math.sin(ang), dz = -Math.cos(ang);
+        let t = 0; while (t < 12 && G.inPoly({ x: c.x + dx * t, y: c.y + dz * t }, pts)) t += 0.1;
+        if (t > best) { best = t; yaw = ang; }
+      }
+      // un passo indietro dal centro, per vedere meglio
+      const back = Math.min(best * 0.35, 1.2);
+      let tx = c.x - Math.sin(yaw) * back, tz = c.y + Math.cos(yaw) * back;
+      if (!G.inPoly({ x: tx, y: tz }, pts)) { tx = c.x; tz = c.y; }
+      if (this.mode !== 'walk') this.setMode('walk');
+      let d = yaw - this.walk.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+      this._fly = { x0: this.walk.x, z0: this.walk.z, y0: this.walk.yaw, x1: tx, z1: tz, y1: this.walk.yaw + d, t0: performance.now(), dur: 650 };
+      this.walk.pitch = -0.05;
+      this._kick();
+      if (this.hooks.onRoom) this.hooks.onRoom(rid);
+    }
+    _roomCheck() {
+      const r = this.currentRoom();
+      if (r && r !== this._lastRoom) { this._lastRoom = r; if (this.hooks.onRoomChange) this.hooks.onRoomChange(r); }
+    }
+    stepRoom(dir) {
+      const list = this.rooms();
+      if (!list.length) return;
+      const cur = this.currentRoom();
+      let i = list.findIndex(r => r.id === cur);
+      i = i < 0 ? 0 : (i + dir + list.length) % list.length;
+      this.goRoom(list[i].id);
+    }
+    _flyStep() {
+      const f = this._fly;
+      const k = Math.min(1, (performance.now() - f.t0) / f.dur), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      this.walk.x = f.x0 + (f.x1 - f.x0) * e; this.walk.z = f.z0 + (f.z1 - f.z0) * e; this.walk.yaw = f.y0 + (f.y1 - f.y0) * e;
+      if (k >= 1) { this._fly = null; this._roomCheck(); }
+      this.dirty = true;
+    }
+
     _stepWalk() {
-      const speed = 0.045;
+      const speed = 0.045 * (this._dt || 1);
       const fw = { x: Math.sin(this.walk.yaw), z: -Math.cos(this.walk.yaw) };
       const rt = { x: Math.cos(this.walk.yaw), z: Math.sin(this.walk.yaw) };
       const nx = this.walk.x + (fw.x * this.walk.move.y + rt.x * this.walk.move.x) * speed;
@@ -1675,6 +1763,7 @@
       if (this._canMove({ x: this.walk.x, y: this.walk.z }, { x: nx, y: nz })) { this.walk.x = nx; this.walk.z = nz; }
       else if (this._canMove({ x: this.walk.x, y: this.walk.z }, { x: nx, y: this.walk.z })) this.walk.x = nx;
       else if (this._canMove({ x: this.walk.x, y: this.walk.z }, { x: this.walk.x, y: nz })) this.walk.z = nz;
+      this._roomCheck();
       this.dirty = true;
     }
 

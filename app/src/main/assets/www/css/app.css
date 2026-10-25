@@ -574,3 +574,10 @@ body.panel-min .sheet, body.panel-min .v3d-panel { max-height: 86px; overflow: h
 .radial .rad:hover { background: var(--sheet); }
 .radial .rad.ai { color: #6D3FD9; border-color: #B9A4F2; box-shadow: 0 0 0 3px rgba(109,63,217,0.15), 0 4px 14px rgba(27,30,34,0.18); }
 .radial .rad.danger { color: #C0392B; }
+
+/* Passeggiata: vai da stanza a stanza */
+.room-nav { position: absolute; right: 10px; bottom: 14px; left: 150px; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; z-index: 5; justify-content: flex-end; }
+.room-nav::-webkit-scrollbar { display: none; }
+.room-nav.hidden { display: none; }
+.room-nav .chip { background: rgba(255,255,255,0.94); flex-shrink: 0; }
+.room-nav .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }

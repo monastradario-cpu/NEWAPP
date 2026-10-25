@@ -952,7 +952,7 @@
       bar.append(editSeg);
       if (view3d.editMode) bar.append(el('button', { class: 'chip small accent', html: '<b style="font-size:16px;line-height:1">+</b><span>Aggiungi</span>', onclick: add3d }));
       bar.append(
-        seg([['orbit', 'Modellino'], ['walk', 'Passeggiata']], view3d.mode, v => { view3d.setMode(v); $('joystick').classList.toggle('hidden', v !== 'walk'); render(); }),
+        seg([['orbit', 'Modellino'], ['walk', 'Passeggiata']], view3d.mode, v => { view3d.setMode(v); $('joystick').classList.toggle('hidden', v !== 'walk'); render(); roomNav(); if (v === 'walk') $('v3dTip').classList.add('hidden'); if (v === 'walk' && CM.isPC && CM.isPC()) U.toast('Frecce per camminare (Maiusc per correre) \u00b7 PagSu/PagGi\u00f9 per cambiare stanza'); }),
         seg([['prima', 'Prima'], ['dopo', 'Dopo']], view3d.phase, v => { view3d.phase = v; view3d.build(project); render(); }),
         el('button', { class: 'chip small' + (view3d.lowWalls ? ' active' : ''), text: 'Muri bassi', onclick: () => { view3d.lowWalls = !view3d.lowWalls; view3d.build(project); render(); } }),
         el('button', { class: 'chip small', html: U.icon('sun', 16) + '<span>Sole</span>', onclick: () => $('sunPanel').classList.toggle('hidden') }),
@@ -975,6 +975,7 @@
       );
     };
     render();
+    build3dUi.refresh = render;
     // sole
     const day = el('input', { type: 'range', min: '1', max: '365', value: String(view3d.day), 'aria-label': 'Giorno dell’anno' });
     const hour = el('input', { type: 'range', min: '5', max: '21', step: '0.25', value: String(view3d.hour), 'aria-label': 'Ora del giorno' });
@@ -1005,6 +1006,20 @@
     const jend = () => { jid = null; knob.style.transform = ''; view3d.setMove(0, 0); };
     joy.addEventListener('pointerup', jend); joy.addEventListener('pointercancel', jend);
     void wrap;
+  }
+
+  // Barra "vai in…" per passare da stanza a stanza (passeggiata)
+  function roomNav() {
+    let nav = $('roomNav');
+    if (!nav) { nav = el('div', { class: 'room-nav', id: 'roomNav', role: 'toolbar', 'aria-label': 'Vai in un\u2019altra stanza' }); $('view3dWrap').appendChild(nav); }
+    if (!view3d || view3d.mode !== 'walk') { nav.classList.add('hidden'); return; }
+    nav.classList.remove('hidden');
+    nav.innerHTML = '';
+    const cur = view3d.currentRoom();
+    nav.append(el('button', { class: 'chip small', 'aria-label': 'Stanza precedente', title: 'Stanza precedente (PagSu)', text: '\u25c0', onclick: () => view3d.stepRoom(-1) }));
+    view3d.rooms().forEach(r => nav.appendChild(el('button', { class: 'chip small' + (r.id === cur ? ' active' : ''), text: r.name, onclick: () => view3d.goRoom(r.id) })));
+    nav.append(el('button', { class: 'chip small', 'aria-label': 'Stanza successiva', title: 'Stanza successiva (PagGi\u00f9)', text: '\u25b6', onclick: () => view3d.stepRoom(1) }));
+    const a = nav.querySelector('.active'); if (a) a.scrollIntoView({ inline: 'center', block: 'nearest' });
   }
 
   // Contesto per la personalizzazione (3D, stili, ispirazione)
@@ -1199,6 +1214,8 @@
         onDragEnd: () => { editor.extDragEnd(); schedule3d(); },
         onDragCancel: () => { editor.extDragCancel(); schedule3d(); },
         onPlace: onPlace3d,
+        onRoomChange: () => { const nav = $('roomNav'); if (nav && !nav.classList.contains('hidden')) roomNav(); },
+        onRoom: () => { $('joystick').classList.remove('hidden'); setTimeout(() => { if (view3d.mode === 'walk') { build3dUi.refresh && build3dUi.refresh(); roomNav(); } }, 700); },
         onContext: on3dContext,
         onRect: (a, b, final) => {
           if (!final) { view3d.showDraft({ rect: { a, b } }); return; }
@@ -1219,6 +1236,7 @@
     view3d.resize();
     view3d.build(project);
     view3d.resize();
+    roomNav();
     if (view3d.editMode) renderSheet();
   }
 
@@ -1518,6 +1536,7 @@
       ['Generali', ''], ['Ctrl+Z / Ctrl+Y', 'Annulla / Ripeti'], ['1 … 5', 'Pianta, 3D, Arredo, Costi, Lavori'], ['?', 'Questo elenco'], ['Esc', 'Chiudi, smetti di inserire'],
       ['Oggetto selezionato', ''], ['Canc', 'Elimina'], ['Ctrl+C / Ctrl+V', 'Copia / Incolla dove c’è il mouse'], ['Ctrl+D', 'Duplica'], ['R / Maiusc+R', 'Ruota di 90° / 15°'], ['Frecce', 'Sposta di 5 cm (con Maiusc: 1 cm)'],
       ['Strumenti (pianta e 3D in Modifica)', ''], ['V', 'Seleziona'], ['S', 'Stanza'], ['M', 'Muri'], ['P', 'Porte e finestre'], ['A', 'Arredo'], ['I', 'Luci e impianti'], ['F', 'Inquadra tutta la casa'], ['T', 'Pianta e 3D affiancati'],
+      ['3D', ''], ['Frecce', 'Cammina e gira (in Modellino: gira la casa)'], ['W A S D', 'Cammina (Q / E: passo di lato)'], ['Maiusc', 'Corri'], ['PagSu / PagGi\u00f9', 'Stanza precedente / successiva'], ['+ / \u2212', 'Avvicina / allontana (Modellino)'],
       ['Mouse', ''], ['Tasto destro', 'Menu dell’oggetto (o “Fine” mentre inserisci)'], ['Rotella', 'Zoom'], ['3D: sinistro / destro', 'Gira / sposta la vista']
     ];
     const body = el('div', { class: 'keys' }, rows.map(([k, v]) => v === '' ? el('div', { class: 'sec-title', text: k }) : el('div', { class: 'key-row' }, [el('kbd', { text: k }), el('span', { text: v })])));
@@ -1533,6 +1552,15 @@
     if (key === '?' || key === 'F1') { e.preventDefault(); shortcutsDialog(); return; }
     if (!ctrl && !e.altKey && /^[1-5]$/.test(key)) { closeCtx(); setTab(['pianta', '3d', 'arredo', 'costi', 'lavori'][+key - 1]); return; }
     const in3 = is3dEdit(), inPlan = tab === 'pianta';
+    // 3D: frecce (e W A S D in passeggiata) per muoversi, PagSu/PagGiù per cambiare stanza
+    if (tab === '3d' && view3d && view3d.ready && !ctrl && !e.altKey) {
+      const code = e.code || '';
+      const arrow = /^Arrow/.test(code), walkKey = view3d.mode === 'walk' && /^Key[WASDQE]$/.test(code) && !(in3 && v3dTool);
+      const zoom = /^(Equal|Minus|NumpadAdd|NumpadSubtract)$/.test(code);
+      const nudging = arrow && in3 && editor.sel.type;
+      if (!nudging && (arrow || walkKey || zoom)) { e.preventDefault(); if (!e.repeat) view3d.key(code, true, e.shiftKey); else view3d._run = e.shiftKey; return; }
+      if (key === 'PageDown' || key === 'PageUp') { e.preventDefault(); view3d.stepRoom(key === 'PageDown' ? 1 : -1); return; }
+    }
     if (!inPlan && !in3) return;
     if (ctrl && low === 'z') { e.preventDefault(); e.shiftKey ? editor.redo() : editor.undo(); return; }
     if (ctrl && low === 'y') { e.preventDefault(); editor.redo(); return; }
@@ -1910,6 +1938,8 @@
     window.addEventListener('resize', () => { editor.resize(); if (project && tab === 'pianta') renderSheet(); });
 
     document.addEventListener('keydown', onKey);
+    document.addEventListener('keyup', (e) => { if (view3d && view3d.keys) { view3d.key(e.code || '', false, e.shiftKey); view3d._run = e.shiftKey; } });
+    window.addEventListener('blur', () => { if (view3d) view3d.clearKeys(); });
     // Incolla: un'immagine negli appunti diventa la foto del mobile selezionato (al computer); altrimenti incolla gli elementi copiati
     document.addEventListener('paste', async (e) => {
       if (U.overlayOpen() || /INPUT|TEXTAREA/.test(document.activeElement.tagName) || $('editor').classList.contains('hidden')) return;
