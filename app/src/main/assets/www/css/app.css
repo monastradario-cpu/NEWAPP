@@ -555,3 +555,14 @@ body.panel-min .sheet, body.panel-min .v3d-panel { max-height: 86px; overflow: h
 .batch-list { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
 .batch-row { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .batch-row img { width: 44px; height: 44px; object-fit: contain; background: #fff; border-radius: 6px; border: 1px solid var(--line); }
+
+/* Colore su misura (RAL, NCS, da foto) */
+.swatch.more { display: inline-flex; align-items: center; justify-content: center; font: 700 10px var(--mono); color: var(--ink); background: conic-gradient(#e66 0 16%, #ec6 0 33%, #6c6 0 50%, #6cc 0 66%, #66e 0 83%, #c6c 0) !important; }
+.swatch.more span { background: rgba(255,255,255,0.88); border-radius: 6px; padding: 1px 3px; }
+.swatch.big { width: 44px; height: 44px; border-radius: 10px; display: inline-block; border: 1px solid var(--line); flex-shrink: 0; }
+.color-preview { display: flex; gap: 10px; align-items: center; min-height: 52px; margin-top: 10px; }
+.ral-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; max-height: 42vh; overflow-y: auto; margin-top: 6px; }
+.ral-grid .ral { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 6px; font-size: 12.5px; text-align: left; cursor: pointer; }
+.ral-grid .ral .swatch { width: 28px; height: 28px; flex-shrink: 0; }
+.colordlg .seg { margin-bottom: 4px; }
+.swatch.more span { font-size: 10px; text-shadow: none; color: var(--ink); }

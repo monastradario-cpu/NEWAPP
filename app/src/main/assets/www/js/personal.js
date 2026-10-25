@@ -10,12 +10,13 @@
   /* ---------- Pezzi riutilizzabili ---------- */
   // Riga di campioni di colore, con "+" per un colore qualsiasi
   PS.swatches = function (current, onPick, extra) {
-    const list = [...new Set((extra || []).concat(CM.SWATCHES))];
+    const mine = CM.myColors ? CM.myColors() : [];
+    const info = {}; mine.forEach(c => { info[c.color.toLowerCase()] = c; });
+    const list = [...new Set(mine.map(c => c.color).concat(extra || [], CM.SWATCHES).map(c => c.toUpperCase()))];
     const row = el('div', { class: 'swatches' });
-    list.forEach(c => row.appendChild(el('button', { class: 'swatch' + (current && current.toLowerCase() === c.toLowerCase() ? ' on' : ''), style: 'background:' + c, 'aria-label': 'Colore ' + c, onclick: () => onPick(c) })));
-    const custom = el('input', { type: 'color', value: current && /^#[0-9a-f]{6}$/i.test(current) ? current : '#c49a6c', 'aria-label': 'Scegli un colore qualsiasi' });
-    custom.addEventListener('change', () => onPick(custom.value));
-    row.appendChild(el('label', { class: 'swatch more', title: 'Altro colore' }, [el('span', { text: '+' }), custom]));
+    // colore su misura: RAL, NCS, da una foto
+    if (CM.colorDialog) row.appendChild(el('button', { class: 'swatch more', title: 'Colore su misura: RAL, NCS o da una foto', 'aria-label': 'Colore su misura', html: '<span>RAL</span>', onclick: async () => { const c = await CM.colorDialog(current); if (c) onPick(c.color, c); } }));
+    list.forEach(c => { const i = info[c.toLowerCase()]; row.appendChild(el('button', { class: 'swatch' + (current && current.toLowerCase() === c.toLowerCase() ? ' on' : ''), style: 'background:' + c, title: i ? (i.code || '') + ' ' + (i.name || '') : c, 'aria-label': 'Colore ' + (i && i.code ? i.code : c), onclick: () => onPick(c, i) })); });
     return row;
   };
   const chips = (items, current, onPick, dot) => el('div', { class: 'chips-row wrap' }, items.map(it => el('button', {
@@ -124,7 +125,7 @@
     if (hit.kind === 'floor' && room) {
       host.appendChild(headRow('Pavimento', room.name));
       const cur = room.finish && room.finish.floor && room.finish.floor.mat;
-      const mats = CM.lib.materials().filter(m => m.cat === 'pavimenti');
+      const mats = CM.lib.materials().filter(m => m.cat === 'pavimenti' && m.type !== 'rivestimento');
       host.appendChild(el('div', { class: 'mat-row' }, mats.map(m => el('button', { class: 'mat-chip' + (cur === m.id ? ' on' : ''), onclick: () => { ctx.mutate(pl => { const r = pl.rooms[rid]; r.finish = r.finish || {}; r.finish.floor = Object.assign({ pose: 'dritta' }, r.finish.floor, { mat: m.id }); }); done(); } }, [
         el('span', { class: 'mat-sw', style: m.img && /^data:/.test(m.img) ? 'background-image:url(' + m.img + ');background-size:cover' : 'background:' + (m.color || '#ccc') }),
         el('span', { text: m.name })
@@ -149,10 +150,10 @@
       const scope = PS._scope || 'stanza';
       host.appendChild(el('div', { class: 'seg compact', style: 'margin:6px 0' }, [['stanza', 'Tutta la stanza'], ['parete', 'Solo questa parete']].map(([v, l]) => el('button', { class: scope === v ? 'on' : '', text: l, onclick: () => { PS._scope = v; PS.panel3d(host, hit, ctx); } }))));
       const current = scope === 'parete' ? (isAccent ? f.accent.color : (pm && pm.color)) : (pm && pm.color);
-      host.appendChild(PS.swatches(current, c => {
+      host.appendChild(PS.swatches(current, (c, inf) => {
         ctx.mutate(pl => {
           const r = pl.rooms[rid]; r.finish = r.finish || {};
-          if (scope === 'stanza') { r.finish.paint = Object.assign({ coats: 2 }, r.finish.paint, { mat: CM.style.paintMat(c) }); if (r.finish.accent) r.finish.accent.walls = r.finish.accent.walls.filter(w => w !== hit.id || r.finish.accent.color !== c); }
+          if (scope === 'stanza') { r.finish.paint = Object.assign({ coats: 2 }, r.finish.paint, { mat: CM.style.paintMat(c, inf && inf.code ? 'Pittura ' + inf.code + (inf.name && !/^simile/.test(inf.name) ? ' ' + inf.name : '') : undefined, inf && inf.code) }); if (r.finish.accent) r.finish.accent.walls = r.finish.accent.walls.filter(w => w !== hit.id || r.finish.accent.color !== c); }
           else {
             const acc = r.finish.accent && r.finish.accent.color === c ? r.finish.accent : { color: c, walls: [] };
             acc.walls = [...new Set((acc.walls || []).concat([hit.id]))];

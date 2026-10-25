@@ -205,7 +205,7 @@
 
     sheet.appendChild(section('Pavimento'));
     let fl = el('div', { class: 'fields' });
-    fl.appendChild(U().selectField('Materiale', matOptions(m => m.cat === 'pavimenti'), (f.floor && f.floor.mat) || '', v => pick(v, 'piastrella', id => mut(fi => { fi.floor = id ? Object.assign({ pose: 'dritta' }, fi.floor, { mat: id }) : null; }))));
+    fl.appendChild(U().selectField('Materiale', matOptions(m => m.cat === 'pavimenti' && m.type !== 'rivestimento'), (f.floor && f.floor.mat) || '', v => pick(v, 'piastrella', id => mut(fi => { fi.floor = id ? Object.assign({ pose: 'dritta' }, fi.floor, { mat: id }) : null; }))));
     if (f.floor && f.floor.mat && calc.floor && calc.floor.mat && calc.floor.mat.type !== 'resina') {
       fl.appendChild(U().selectField('Posa', Object.keys(CM.POSE).map(k => ({ value: k, label: CM.POSE[k].label + ' (sfrido ' + Math.round(CM.POSE[k].waste * 100) + '%)' })), f.floor.pose || 'dritta', v => mut(fi => { fi.floor.pose = v; }), { full: false }));
       if (calc.floor && calc.floor.mat && calc.floor.mat.type === 'piastrella') fl.appendChild(U().numField('Fuga', f.floor.joint || 3, 'mm', v => mut(fi => { fi.floor.joint = v; }), { min: 1, max: 20 }));
@@ -223,7 +223,7 @@
 
     sheet.appendChild(section('Rivestimento a parete'));
     const cl = el('div', { class: 'fields' });
-    cl.appendChild(U().selectField('Piastrelle', matOptions(m => m.cat === 'pavimenti' && m.type === 'piastrella'), (f.cladding && f.cladding.mat) || '', v => pick(v, 'piastrella', id => mut(fi => { fi.cladding = id ? Object.assign({ height: room.type === 'bagno' ? 1.2 : 0.6, pose: 'dritta' }, fi.cladding, { mat: id }) : null; })), { full: false }));
+    cl.appendChild(U().selectField('Piastrelle o rivestimento', matOptions(m => m.cat === 'pavimenti' && (m.type === 'piastrella' || m.type === 'rivestimento')), (f.cladding && f.cladding.mat) || '', v => pick(v, 'piastrella', id => mut(fi => { fi.cladding = id ? Object.assign({ height: room.type === 'bagno' ? 1.2 : 0.6, pose: 'dritta' }, fi.cladding, { mat: id }) : null; })), { full: false }));
     if (f.cladding && f.cladding.mat) {
       cl.appendChild(U().numField('Altezza', f.cladding.height || 1.2, 'cm', v => mut(fi => { fi.cladding.height = v; }), { min: 0.1, max: 4 }));
       cl.appendChild(U().selectField('Posa', Object.keys(CM.POSE).map(k => ({ value: k, label: CM.POSE[k].label })), f.cladding.pose || 'dritta', v => mut(fi => { fi.cladding.pose = v; }), { full: false }));

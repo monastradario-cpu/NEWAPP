@@ -605,6 +605,7 @@
       fields.appendChild(U.numField('Distanza dall’angolo', Math.max(0, op.pos - op.w / 2), 'cm', v => mut(pl => { const o = pl.openings[sel.id]; o.pos = v + o.w / 2; }), { min: 0, max: 100 }));
       CM.sheets.openingState(fields, ctx, sel.id);
       sheet.appendChild(fields);
+      if (op.kind !== 'arco') sheet.appendChild(CM.trim.openingControls(plan, sel.id, (fn) => mut(fn, 'style')));
       const acts = [el('button', { class: 'btn', html: U.icon('flip', 18) + 'Inverti lato', onclick: () => mut(pl => { pl.openings[sel.id].flipSide = !pl.openings[sel.id].flipSide; }) })];
       if (op.kind === 'battente') acts.push(el('button', { class: 'btn', html: U.icon('hinge', 18) + 'Cerniera', onclick: () => mut(pl => { pl.openings[sel.id].flipHinge = !pl.openings[sel.id].flipHinge; }) }));
       acts.push(el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina', onclick: () => editor.deleteSelection() }));
@@ -954,7 +955,7 @@
         el('button', { class: 'chip small', html: U.icon('sun', 16) + '<span>Sole</span>', onclick: () => $('sunPanel').classList.toggle('hidden') }),
         el('button', { class: 'chip small accent', html: U.icon('spark', 16) + '<span>Stili</span>', onclick: () => CM.personal.styleGallery(persCtx()) }),
         el('button', { class: 'chip small', text: 'Ispirazione', onclick: () => CM.inspire && CM.inspire.open(persCtx()) }),
-        seg([['leggero', 'Leggero'], ['realistico', 'Realistico']], view3d.quality, v => { view3d.setQuality(v); render(); U.toast(v === 'realistico' ? 'Qualit\u00e0 realistica: pi\u00f9 bella, consuma di pi\u00f9' : 'Qualit\u00e0 leggera: fluida e risparmia batteria'); }),
+        seg([['auto', 'Qualit\u00e0 auto'], ['leggero', 'Leggero'], ['realistico', 'Realistico']], view3d.quality, v => { view3d.setQuality(v); render(); U.toast(v === 'auto' ? 'L\u2019app sceglie la qualit\u00e0 che il dispositivo regge (ora: ' + (view3d.tier === 'alta' ? 'realistica' : 'leggera') + ')' : v === 'realistico' ? 'Qualit\u00e0 realistica: pi\u00f9 bella, consuma di pi\u00f9' : 'Qualit\u00e0 leggera: fluida e risparmia batteria'); }),
         el('button', { class: 'chip small', text: 'Foto', onclick: () => CM.share.file('vista-3d.jpg', 'image/jpeg', view3d.snapshot(), true) }),
         el('button', { class: 'chip small', text: 'Esporta 3D', onclick: () => {
           const low = view3d.lowWalls; if (low) { view3d.lowWalls = false; view3d.build(project); }
@@ -1421,6 +1422,7 @@
       { id: 'assistant', label: 'Assistente', icon: 'spark' },
       { id: 'share', label: 'Condividi con altre persone', icon: 'share' },
       CM.clipboard ? { id: 'paste', label: 'Incolla gli elementi copiati', icon: 'copy' } : null,
+      { id: 'trim', label: 'Porte, finestre e battiscopa', icon: 'opening' },
       { id: 'tavole', label: 'Tavole in scala (PDF per geometra e ditte)', icon: 'ruler' },
       { id: 'pdf', label: 'Esporta PDF riepilogo', icon: 'opening' },
       { id: 'img', label: 'Immagine della pianta', icon: 'image' },
@@ -1460,6 +1462,7 @@
         editor.setTool('multi'); editor.setMulti(out); buildTools(); renderSheet(); editor.fit();
         return U.toast('Incollato: trascina il riquadro blu dove vuoi');
       }
+      case 'trim': return CM.trim.houseDialog((fn) => editor.mutate(fn, 'style'), () => editor.plan);
       case 'pdf': return CM.share.pdf(project);
       case 'img': return CM.share.file('pianta-' + project.name.replace(/\W+/g, '-') + '.png', 'image/png', CM.share.planImage(project), true);
       case 'file': return CM.share.exportProject(project);

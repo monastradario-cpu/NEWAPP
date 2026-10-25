@@ -65,9 +65,11 @@
   S.saveCustom = (st) => { const list = CM.store.getJSON('stili', []).filter(x => x.id !== st.id); list.push(st); CM.store.putJSON('stili', list); };
 
   // Pittura come materiale riutilizzabile (per calcolo litri e costi)
-  S.paintMat = function (color, name) {
+  S.paintMat = function (color, name, code) {
     const id = 'm-colore-' + color.replace('#', '').toLowerCase();
-    if (!CM.lib.material(id)) CM.lib.saveMaterial({ id, type: 'pittura', cat: 'pitture', name: name || ('Idropittura ' + color.toUpperCase()), color, code: '', resa: 10, canL: 5, price: 10 });
+    const cur = CM.lib.material(id);
+    if (!cur) CM.lib.saveMaterial({ id, type: 'pittura', cat: 'pitture', name: name || ('Idropittura ' + color.toUpperCase()), color, code: code || '', resa: 10, canL: 5, price: 10 });
+    else if (code && !cur.code) CM.lib.saveMaterial(Object.assign({}, cur, { code, name: name || cur.name }));
     return id;
   };
 
