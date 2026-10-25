@@ -172,7 +172,7 @@
       url: item.url || '', img: item.img || '', light: !!item.light
     };
     // finiture, modello 3D del negozio e composizioni (PAX, cucine\u2026)
-    for (const k of ['fabric', 'wood', 'metal', 'model', 'system', 'modules', 'front', 'handle', 'worktop', 'body', 'components', 'mount']) if (item[k] != null) plan.furniture[id][k] = CM.clone(item[k]);
+    for (const k of ['fabric', 'wood', 'metal', 'model', 'variant', 'system', 'modules', 'front', 'handle', 'worktop', 'body', 'components', 'mount', 'cutout', 'cutoutAspect', 'look', 'detail']) if (item[k] != null) plan.furniture[id][k] = CM.clone(item[k]);
     return id;
   };
   P.pointInFurniture = function (f, p) {

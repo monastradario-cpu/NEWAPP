@@ -350,6 +350,7 @@
       this.group = new T.Group();
       this.scene.add(this.group);
       this.lamps = [];
+      this._billboards = [];
       const redraw = () => { this.dirty = true; };
       const b = P.bounds(plan) || { minX: 0, minY: 0, maxX: 8, maxY: 6 };
       this.bounds = b;
@@ -839,6 +840,25 @@
       return { main, fabric: kind === 'fabric' ? main : fabricMat(), wood: kind === 'wood' ? main : woodMat(), metal: metalMat, hi };
     }
 
+    _buildCutout(f, g) {
+      const T = window.THREE;
+      const tex = imageTexture(f.cutout, () => { this.dirty = true; });
+      tex.wrapS = tex.wrapT = T.ClampToEdgeWrapping;
+      const asp = f.cutoutAspect || 1.4;
+      const H = f.h || 0.8, W = Math.max(f.w || 0.8, 0.1);
+      let cw = Math.min(W, H * asp), ch = cw / asp;
+      if (ch < H * 0.8) { ch = H; cw = ch * asp; }
+      const mat = new T.MeshStandardMaterial({ map: tex, alphaTest: 0.45, side: T.DoubleSide, roughness: 0.85, emissive: new T.Color(0.55, 0.55, 0.55), emissiveMap: tex });
+      const m = new T.Mesh(new T.PlaneGeometry(cw, ch), mat);
+      m.position.y = ch / 2;
+      m.castShadow = true; m.receiveShadow = false;
+      m.customDepthMaterial = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, map: tex, alphaTest: 0.45 });
+      m.userData.billboard = true;
+      g.add(m);
+      this._billboards = this._billboards || [];
+      this._billboards.push(m);
+    }
+
     // Cuscini decorativi: un tono più chiaro o più scuro del divano
     _accentFabric(f) {
       const T = window.THREE;
@@ -974,6 +994,13 @@
       const hi = M.hi;
       const W = f.w, D = f.d, H = f.h || 0.8;
       const box = (w, h, d, x, y, z, m) => { const b = new T.Mesh(new T.BoxGeometry(w, h, d), m || base); b.position.set(x, y, z); b.castShadow = true; b.receiveShadow = true; g.add(b); return b; };
+      // foto ritagliata del mobile: una sagoma che guarda sempre verso chi osserva
+      if (f.look === 'foto' && f.cutout) {
+        this._buildCutout(f, g);
+        g.position.set(f.x, f.elev || 0, f.y); g.rotation.y = -(f.rot || 0);
+        this.group.add(g);
+        return;
+      }
       // modello 3D vero del negozio, se l'abbiamo
       if (f.model && CM.glb) {
         const mdl = this._model(f.model);
@@ -997,7 +1024,11 @@
           box(W, 0.26, D, 0, 0.17, 0, wood);                                   // struttura
           box(0.05, 0.06, 0.05, -W / 2 + 0.05, 0.03, D / 2 - 0.05, dark); box(0.05, 0.06, 0.05, W / 2 - 0.05, 0.03, D / 2 - 0.05, dark);
           soft(W - 0.04, 0.22, D - 0.1, 0, 0.41, 0.03, light, 0.06);         // materasso
-          soft(W + 0.02, 1.0, 0.09, 0, 0.55, -D / 2 + 0.045, M.fabric, 0.035); // testiera imbottita
+          { const tb = (f.detail || {}).testiera; // testiera
+            if (tb === 'legno') box(W + 0.04, 0.9, 0.05, 0, 0.45, -D / 2 + 0.025, wood);
+            else if (tb === 'alta') soft(W + 0.1, 1.3, 0.1, 0, 0.65, -D / 2 + 0.05, M.fabric, 0.04);
+            else if (tb === 'metallo') { for (let i = 0; i <= Math.round(W / 0.15); i++) cyl(0.012, 0.012, 1.0, -W / 2 + i * W / Math.round(W / 0.15), 0.5, -D / 2 + 0.02, dark); box(W, 0.03, 0.03, 0, 1.0, -D / 2 + 0.02, dark); }
+            else if (tb !== 'assente') soft(W + 0.02, 1.0, 0.09, 0, 0.55, -D / 2 + 0.045, M.fabric, 0.035); }
           const pw = W > 1.2 ? (W - 0.3) / 2 : W - 0.2;
           const pil = (x) => soft(pw, 0.13, 0.36, x, 0.58, -D / 2 + 0.3, light, 0.06);
           if (W > 1.2) { pil(-pw / 2 - 0.05); pil(pw / 2 + 0.05); } else pil(0);
@@ -1005,9 +1036,13 @@
           break;
         }
         case 'sofa': case 'armchair': {
-          const arm = Math.min(0.18, W * 0.12), seatH = 0.42;
-          box(W, 0.12, D, 0, 0.14, 0, base);                                      // base
-          legs(0.08, 0.06, dark, 0.035);
+          const dt = f.detail || {};
+          const armT = dt.braccioli || 'larghi';
+          let arm = armT === 'nessuno' ? 0 : armT === 'sottili' ? 0.08 : Math.min(0.18, W * 0.12);
+          const legH = dt.gambe === 'alte' ? 0.18 : dt.gambe === 'nessuna' ? 0.0 : 0.08;
+          const seatH = 0.34 + legH;
+          box(W, 0.12, D, 0, legH + 0.06, 0, base);                               // base
+          if (legH > 0) legs(legH, 0.06, dt.gambe === 'legno' || (dt.gambe === 'alte' && f.wood) ? wood : dark, dt.gambe === 'alte' ? 0.03 : 0.035);
           const n = f.shape === 'armchair' ? 1 : Math.max(2, Math.round((W - 2 * arm) / 0.7));
           const cw = (W - 2 * arm) / n;
           for (let i = 0; i < n; i++) {
@@ -1015,11 +1050,13 @@
             soft(cw - 0.01, 0.16, D - 0.26, x, seatH - 0.08 + 0.02, 0.08, base, 0.05); // seduta
             soft(cw - 0.02, H - seatH - 0.02, 0.2, x, seatH + (H - seatH) / 2 - 0.02, -D / 2 + 0.17, base, 0.07); // schienale
           }
-          box(W, H - 0.2, 0.08, 0, 0.2 + (H - 0.2) / 2 - 0.04, -D / 2 + 0.04, base);
-          soft(arm, 0.62 - 0.14, D, -W / 2 + arm / 2, 0.2 + (0.62 - 0.2) / 2, 0, base, 0.06);
-          soft(arm, 0.62 - 0.14, D, W / 2 - arm / 2, 0.2 + (0.62 - 0.2) / 2, 0, base, 0.06);
+          box(W, H - 0.2 - (legH - 0.08), 0.08, 0, legH + 0.12 + (H - 0.2 - (legH - 0.08)) / 2 - 0.04, -D / 2 + 0.04, base);
+          if (arm > 0) {
+            const ah = (dt.braccioli === 'bassi' ? 0.5 : 0.62) - legH + 0.08 - 0.14, ar = armT === 'tondi' ? 0.08 : 0.06;
+            for (const sx of [-1, 1]) soft(arm, ah, D, sx * (W / 2 - arm / 2), legH + 0.12 + ah / 2, 0, base, armT === 'tondi' ? Math.min(ar, arm / 2 - 0.002) : 0.03);
+          }
           // cuscini decorativi
-          if (f.shape === 'sofa' && W > 1.4) {
+          if (f.shape === 'sofa' && W > 1.4 && (dt.cuscini_decorativi == null || dt.cuscini_decorativi > 0)) {
             const pm = this._accentFabric(f);
             for (const sx of [-1, 1]) { const c = soft(0.42, 0.4, 0.13, sx * (W / 2 - arm - 0.26), seatH + 0.24, -D / 2 + 0.33, pm, 0.06); c.rotation.z = sx * 0.12; c.rotation.x = -0.18; }
           }
@@ -1036,11 +1073,20 @@
           legs(0.08, 0.06, dark, 0.035);
           break;
         }
-        case 'table': case 'desk':
-          box(W, 0.04, D, 0, H - 0.02, 0, wood);
-          legs(H - 0.04, 0.06, f.metal ? dark : wood, 0.05);
+        case 'table': case 'desk': {
+          const dt = f.detail || {};
+          const topM = dt.piano_colore ? mat({ color: dt.piano_colore, roughness: 0.4 }) : wood;
+          const legM = dt.gambe_colore ? mat({ color: dt.gambe_colore, roughness: 0.5, metalness: f.metal ? 0.5 : 0 }) : (f.metal ? dark : wood);
+          if (dt.piano === 'ovale') { const t = cyl(1, 1, 0.04, 0, H - 0.02, 0, topM, 48); t.scale.set(W / 2, 1, D / 2); }
+          else soft(W, 0.04, D, 0, H - 0.02, 0, topM, 0.012);
+          if (dt.gambe === 'centrale') { cyl(0.05, 0.05, H - 0.04, 0, (H - 0.04) / 2, 0, legM); cyl(Math.min(W, D) * 0.3, Math.min(W, D) * 0.32, 0.03, 0, 0.015, 0, legM); }
+          else if (dt.gambe === 'cavalletto' || dt.gambe === 'x') {
+            for (const sx of [-1, 1]) { const x = sx * (W / 2 - 0.12); for (const sz of [-1, 1]) { const l = box(0.05, H - 0.02, 0.05, x, (H - 0.04) / 2, sz * D * 0.18, legM); l.rotation.x = sz * 0.28; } box(0.05, 0.05, D * 0.7, x, 0.05, 0, legM); }
+          } else if (dt.gambe === 'pannelli') { for (const sx of [-1, 1]) box(0.04, H - 0.04, D - 0.04, sx * (W / 2 - 0.05), (H - 0.04) / 2, 0, legM); }
+          else legs(H - 0.04, 0.06, legM, dt.gambe === 'sottili' ? 0.03 : 0.05);
           if (f.shape === 'desk') box(Math.min(0.45, W * 0.35), 0.16, D - 0.06, W / 2 - Math.min(0.45, W * 0.35) / 2 - 0.04, H - 0.12, 0, wood);
           break;
+        }
         case 'round_table': cyl(W / 2, W / 2, 0.04, 0, H - 0.02, 0, wood, 40); cyl(0.05, 0.05, H - 0.04, 0, (H - 0.04) / 2, 0, dark); cyl(0.26, 0.28, 0.03, 0, 0.015, 0, dark); break;
         case 'chair':
           soft(W, 0.05, D, 0, 0.46, 0, f.fabric ? M.fabric : wood, 0.02);
@@ -1262,10 +1308,20 @@
         this.camera.lookAt(o.target.x, o.target.y, o.target.z);
       }
       this.camera.updateProjectionMatrix();
+      // le foto ritagliate guardano sempre verso chi osserva (solo intorno all'asse verticale)
+      if (this._billboards && this._billboards.length) {
+        const cp = this.camera.position;
+        for (const b of this._billboards) {
+          const par = b.parent; if (!par || !par.parent) continue;
+          const yaw = Math.atan2(cp.x - par.position.x, cp.z - par.position.z);
+          b.rotation.y = yaw - par.rotation.y;
+        }
+      }
       const now = performance.now();
       if (this._lastR) this._perf(now - this._lastR);
       this._lastR = now;
       this.renderer.render(this.scene, this.camera);
+      if (this.hooks.onRender) this.hooks.onRender();
     }
 
     _bind() {
@@ -1475,6 +1531,22 @@
         if (ok) box.expandByObject(o);
       });
       return box.isEmpty() ? null : box;
+    }
+
+    // Rettangolo sullo schermo (px, rispetto al disegno 3D) occupato da un elemento
+    screenBox(hit) {
+      const T = window.THREE;
+      const box = hit && this._boxOf(hit);
+      if (!box) return null;
+      const r = this.renderer.domElement.getBoundingClientRect();
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+        const p = new T.Vector3(x, y, z).project(this.camera);
+        if (p.z > 1) continue;
+        const sx = (p.x + 1) / 2 * r.width, sy = (1 - p.y) / 2 * r.height;
+        x0 = Math.min(x0, sx); y0 = Math.min(y0, sy); x1 = Math.max(x1, sx); y1 = Math.max(y1, sy);
+      }
+      return isFinite(x0) ? { x0, y0, x1, y1, w: r.width, h: r.height } : null;
     }
 
     // Sposta subito un mobile già costruito (mentre lo trascini), senza ricostruire la scena

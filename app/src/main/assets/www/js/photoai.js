@@ -38,6 +38,10 @@
       '"tessuto": uno tra [' + CM.FABRICS.map(f => f.id).join(', ') + '] o null se non è imbottito, ' +
       '"legno": uno tra [' + CM.WOODS.map(w => w.id).join(', ') + '] o null, ' +
       '"metallo": uno tra [' + CM.METALS.map(m => m.id).join(', ') + '] o null (gambe, maniglie), ' +
+      '"dettagli": oggetto con i dettagli utili a ridisegnarlo, solo quelli che si vedono: ' +
+      'per divani e poltrone {"braccioli":"nessuno|sottili|larghi|tondi|bassi","gambe":"nessuna|corte|alte|legno|metallo","cuscini_decorativi":numero}; ' +
+      'per tavoli e scrivanie {"piano":"rettangolare|ovale","gambe":"quattro|sottili|centrale|cavalletto|pannelli","piano_colore":"#RRGGBB","gambe_colore":"#RRGGBB"}; ' +
+      'per letti {"testiera":"imbottita|legno|alta|metallo|assente"}; altrimenti {}, ' +
       '"descrizione": una frase su stile e materiali}.';
     return CM.ai.text(prompt, { json: true, images: [img] });
   };
@@ -65,11 +69,80 @@
     if (CM.FABRICS.some(f => f.id === j.tessuto)) out.fabric = j.tessuto;
     if (CM.WOODS.some(f => f.id === j.legno)) out.wood = j.legno;
     if (CM.METALS.some(f => f.id === j.metallo)) out.metal = j.metallo;
+    if (j.dettagli && typeof j.dettagli === 'object') {
+      const d = {};
+      for (const [k, v] of Object.entries(j.dettagli)) if (v != null && v !== '' && String(v).length < 20) d[k] = /colore/.test(k) ? hex(v) : (typeof v === 'number' ? v : String(v).toLowerCase());
+      if (Object.keys(d).length) out.detail = d;
+    }
     out.light = /^lamp/.test(shape);
     if (shape === 'lamp_ceiling') out.elev = 2.3;
     if (shape === 'kitchen_wall') out.elev = 1.45;
     if (['mirror', 'picture'].includes(shape)) out.elev = 1.2;
     return out;
+  };
+
+  // Foto ritagliata: toglie lo sfondo uniforme (bianco o grigio dei siti dei negozi) e ritaglia il mobile
+  PA.cutout = function (src) {
+    return new Promise(resolve => {
+      const im = new Image();
+      im.onload = () => {
+        const k = Math.min(1, 700 / Math.max(im.naturalWidth, im.naturalHeight));
+        const w = Math.max(8, Math.round(im.naturalWidth * k)), h = Math.max(8, Math.round(im.naturalHeight * k));
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const x = c.getContext('2d'); x.drawImage(im, 0, 0, w, h);
+        const d = x.getImageData(0, 0, w, h), px = d.data;
+        // colore del bordo
+        const border = [];
+        for (let i = 0; i < w; i += 2) border.push(i, (h - 1) * w + i);
+        for (let j = 0; j < h; j += 2) border.push(j * w, j * w + w - 1);
+        let r = 0, g = 0, b = 0;
+        for (const p of border) { r += px[p * 4]; g += px[p * 4 + 1]; b += px[p * 4 + 2]; }
+        r /= border.length; g /= border.length; b /= border.length;
+        const dist = (p) => Math.abs(px[p * 4] - r) + Math.abs(px[p * 4 + 1] - g) + Math.abs(px[p * 4 + 2] - b);
+        const uniform = border.filter(p => dist(p) < 45).length / border.length;
+        if (uniform < 0.82) return resolve({ ok: false });
+        // riempimento dal bordo: tutto ciò che è simile allo sfondo e collegato al bordo diventa trasparente
+        const TOL = 54, seen = new Uint8Array(w * h), stack = border.filter(p => dist(p) < TOL);
+        stack.forEach(p => { seen[p] = 1; });
+        while (stack.length) {
+          const p = stack.pop(); px[p * 4 + 3] = 0;
+          const xx = p % w, yy = (p / w) | 0;
+          for (const q of [xx > 0 ? p - 1 : -1, xx < w - 1 ? p + 1 : -1, yy > 0 ? p - w : -1, yy < h - 1 ? p + w : -1]) {
+            if (q < 0 || seen[q]) continue; seen[q] = 1;
+            if (dist(q) < TOL) stack.push(q);
+          }
+        }
+        // bordo morbido e ritaglio
+        let x0 = w, y0 = h, x1 = -1, y1 = -1, solid = 0;
+        for (let p = 0; p < w * h; p++) {
+          if (px[p * 4 + 3] === 0) continue;
+          const xx = p % w, yy = (p / w) | 0;
+          const nb = (xx > 0 && !px[(p - 1) * 4 + 3]) || (xx < w - 1 && !px[(p + 1) * 4 + 3]) || (yy > 0 && !px[(p - w) * 4 + 3]) || (yy < h - 1 && !px[(p + w) * 4 + 3]);
+          if (nb) px[p * 4 + 3] = 150;
+          solid++; if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (yy < y0) y0 = yy; if (yy > y1) y1 = yy;
+        }
+        if (solid < w * h * 0.04 || x1 < 0) return resolve({ ok: false });
+        x.putImageData(d, 0, 0);
+        const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+        const o = document.createElement('canvas'); o.width = cw; o.height = ch;
+        o.getContext('2d').drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
+        let out = o.toDataURL('image/webp', 0.86); if (!/^data:image\/webp/.test(out)) out = o.toDataURL('image/png');
+        resolve({ ok: true, img: out, aspect: cw / ch });
+      };
+      im.onerror = () => resolve({ ok: false });
+      im.src = src;
+    });
+  };
+  // Se lo sfondo non è uniforme (foto di Pinterest, Instagram...), l'AI lo rende bianco e poi si ritaglia
+  PA.cutoutSmart = async function (src) {
+    let r = await PA.cutout(src);
+    if (r.ok || !PA.enabled()) return r;
+    try {
+      U().toast('Tolgo lo sfondo con l\u2019AI\u2026');
+      const clean = await CM.ai.image('Isola il mobile principale di questa foto: mostralo intero, identico (forma, colori, tessuti, prospettiva), su uno sfondo bianco puro uniforme, senza ombre, senza altri oggetti, senza testo.', src);
+      r = await PA.cutout(clean);
+    } catch (e) { r = { ok: false, err: CM.ai.errorText(e) }; }
+    return r;
   };
 
   // Un solo mobile: riconosce la foto e propone i dati prima di applicarli
@@ -153,6 +226,8 @@
       }
       if (!v) v = Object.assign(PA.toFields({ forma: 'box' }), { name: f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').slice(0, 60) || 'Mobile' });
       const it = Object.assign({ id: CM.uid('c'), elev: 0, url: '' }, v, { img });
+      const cut = await PA.cutout(img);
+      if (cut.ok) { it.cutout = cut.img; it.cutoutAspect = cut.aspect; it.look = 'foto'; }
       delete it.measured; delete it.note;
       CM.lib.saveItem(it);
       n++;

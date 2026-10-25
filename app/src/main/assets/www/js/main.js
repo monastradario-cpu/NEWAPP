@@ -618,10 +618,15 @@
       }
       const ops = Object.keys(plan.openings).filter(o => plan.openings[o].wall === sel.id).length;
       const wsf = P.wallSurface(plan, sel.id);
+      // superfici scrivibili: cambiando la superficie cambia l'altezza del muro (superficie = lunghezza × altezza)
+      const af = el('div', { class: 'fields' });
+      af.appendChild(U.numField('Superficie lorda per faccia', wsf.gross, 'm²', v => mut(pl => { const ww = pl.walls[sel.id], l = P.wallLen(pl, ww); if (l > 0.05) ww.h = CM.r3(Math.max(0.3, Math.min(8, v / l))); }), { min: 0.1, max: 400 }));
+      af.appendChild(U.numField('Superficie netta per faccia', wsf.net, 'm²', v => mut(pl => { const ww = pl.walls[sel.id], l = P.wallLen(pl, ww); if (l > 0.05) ww.h = CM.r3(Math.max(0.3, Math.min(8, (v + wsf.openings) / l))); }), { min: 0.1, max: 400 }));
+      sheet.appendChild(af);
       sheet.appendChild(el('div', { class: 'stats' }, [
-        U.stat('Lorda per faccia', CM.fmt.area(wsf.gross)), U.stat('Netta per faccia', CM.fmt.area(wsf.net)),
         U.stat('Netta, due facce', CM.fmt.area(wsf.net * 2)), U.stat('Aperture', ops + ' · ' + CM.fmt.area(wsf.openings))
       ]));
+      sheet.appendChild(el('p', { class: 'muted small', style: 'margin:4px 0 0', text: 'Se scrivi una superficie, l\u2019app adatta l\u2019altezza del muro (superficie = lunghezza \u00d7 altezza).' }));
       sheet.appendChild(el('div', { class: 'actions' }, [
         el('button', { class: 'btn primary', text: '+ Aggiungi un angolo', onclick: () => addCorner(sel.id) }),
         el('button', { class: 'btn', text: 'Vista frontale (prospetto)', onclick: () => CM.elevation && CM.elevation.open(editor.plan, sel.id) }),
@@ -1269,6 +1274,7 @@
         onDragEnd: () => { editor.extDragEnd(); schedule3d(); },
         onDragCancel: () => { editor.extDragCancel(); schedule3d(); },
         onPlace: onPlace3d,
+        onRender: () => updateRadial3d(),
         onRoomChange: () => { const nav = $('roomNav'); if (nav && !nav.classList.contains('hidden')) roomNav(); },
         onRoom: () => { $('joystick').classList.remove('hidden'); setTimeout(() => { if (view3d.mode === 'walk') { build3dUi.refresh && build3dUi.refresh(); roomNav(); } }, 700); },
         onContext: on3dContext,
@@ -1372,7 +1378,7 @@
   function radialItems(sel) {
     const plan = editor.plan, pick = () => sel;
     void pick;
-    const props = () => { U.setPanelMin(false); const s = $('sheet').querySelector('.personal, .sec-title'); if (s) s.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
+    const props = () => { U.setPanelMin(false); const s = (is3dEdit() ? $('v3dPanel') : $('sheet')).querySelector('.personal, .sec-title'); if (s) s.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
     if (sel.type === 'furniture') return [
       { icon: 'brush', t: 'Colore e finiture', run: props },
       { icon: 'rotate', t: 'Ruota di 90\u00b0', run: () => editor.rotateSelected(90) },
@@ -1399,7 +1405,7 @@
     }
     if (sel.type === 'wall') return [
       { icon: 'wall', t: 'Aggiungi un angolo (muro angolare)', run: () => addCorner(sel.id) },
-      { icon: 'rotate', t: 'Curva il muro', run: () => { const b = [...$('sheet').querySelectorAll('button')].find(x => /Curva il muro/.test(x.textContent)); if (b) b.click(); } },
+      { icon: 'rotate', t: 'Curva il muro', run: () => { const b = [...(is3dEdit() ? $('v3dPanel') : $('sheet')).querySelectorAll('button')].find(x => /Curva il muro/.test(x.textContent)); if (b) b.click(); } },
       { icon: 'trash', t: 'Elimina', danger: true, run: () => { editor.deleteSelection(); U.toast('Muro eliminato \u00b7 puoi annullare'); } }
     ];
     if (sel.type === 'node' && P.wallsOfNode(plan, sel.id).length === 2) return [
@@ -1411,6 +1417,37 @@
     ];
     return null;
   }
+  // Lo stesso menu rotondo nel 3D (in Modifica), intorno all'oggetto toccato
+  let radial3dRaf = 0, radial3dKey = '';
+  function updateRadial3d() { if (radial3dRaf) return; radial3dRaf = requestAnimationFrame(() => { radial3dRaf = 0; drawRadial3d(); }); }
+  function drawRadial3d() {
+    let box = $('radial3d');
+    if (!box) { box = el('div', { class: 'radial', id: 'radial3d' }); $('view3dWrap').appendChild(box); }
+    const sel = editor.sel;
+    const items = view3d && tab === '3d' && view3d.editMode && !v3dTool && sel.type && sel.type !== 'room' ? radialItems(sel) : null;
+    const sb = items && !view3d._drag && view3d.screenBox(selToHit(sel));
+    if (!items || !sb || view3d.pointers.size) { box.classList.add('hidden'); return; }
+    const key = sel.type + ':' + sel.id;
+    if (key !== radial3dKey || !box.childNodes.length) {
+      radial3dKey = key; box.innerHTML = '';
+      items.forEach(it => box.appendChild(el('button', { class: 'rad' + (it.ai ? ' ai' : '') + (it.danger ? ' danger' : ''), title: it.t, 'aria-label': it.t, html: U.icon(it.icon, 20), onclick: (e) => { e.stopPropagation(); it.run(); } })));
+    }
+    box.classList.remove('hidden');
+    const panel = $('v3dPanel'), wrapR = $('view3dWrap').getBoundingClientRect();
+    const pr = panel.classList.contains('hidden') ? null : panel.getBoundingClientRect();
+    const bottom = pr && pr.left <= wrapR.left + 10 ? pr.top - wrapR.top : wrapR.height;
+    const cx = (sb.x0 + sb.x1) / 2, cy = (sb.y0 + sb.y1) / 2;
+    const r = Math.max(52, Math.min(Math.hypot(sb.x1 - sb.x0, sb.y1 - sb.y0) / 2 + 26, 160));
+    const n = box.childNodes.length, span = Math.min(Math.PI * 0.9, 0.62 * (n - 1) * 52 / r * 1.1 + 0.2);
+    const up = cy - r > 70, mid = up ? -Math.PI / 2 : Math.PI / 2;
+    [...box.childNodes].forEach((btn, i) => {
+      const a = mid + (n === 1 ? 0 : (i / (n - 1) - 0.5) * span) * (up ? 1 : -1);
+      const x = Math.max(4, Math.min(sb.w - 48, cx + r * Math.cos(a) - 22));
+      const y = Math.max(60, Math.min(bottom - 48, cy + r * Math.sin(a) - 22));
+      btn.style.transform = 'translate(' + Math.round(x) + 'px,' + Math.round(y) + 'px)';
+    });
+  }
+
   function updateRadial() {
     if (radialRaf) return;
     radialRaf = requestAnimationFrame(() => { radialRaf = 0; drawRadial(); });

@@ -111,11 +111,24 @@
         mut(pl => {
           const t = pl.furniture[id]; if (!t) return;
           ['name', 'cat', 'shape', 'w', 'd', 'h', 'price', 'store', 'color', 'light'].forEach(k => { if (v[k] != null && v[k] !== '') t[k] = v[k]; });
-          ['fabric', 'wood', 'metal'].forEach(k => { if (v[k]) t[k] = v[k]; else delete t[k]; });
+          ['fabric', 'wood', 'metal', 'detail'].forEach(k => { if (v[k]) t[k] = CM.clone(v[k]); else delete t[k]; });
           if (v.elev != null) t.elev = v.elev;
         });
-        U().toast('Mobile aggiornato: guardalo nel 3D');
+        // foto ritagliata per il 3D
+        const c = await CM.photoAI.cutoutSmart(img);
+        if (c.ok) mut(pl => { const t = pl.furniture[id]; if (t) { t.cutout = c.img; t.cutoutAspect = c.aspect; t.look = 'foto'; } });
+        U().toast(c.ok ? 'Mobile aggiornato: nel 3D vedi la foto vera (puoi passare alla forma 3D)' : 'Mobile aggiornato: guardalo nel 3D');
       }));
+      // come appare nel 3D
+      if (f.img) {
+        sheet.appendChild(el('div', { class: 'sec-title', text: 'Nel 3D' }));
+        if (f.cutout) sheet.appendChild(U().segField('Aspetto nel 3D', [{ value: 'foto', label: 'Foto vera ritagliata' }, { value: 'forma', label: 'Forma 3D' }], f.look === 'foto' ? 'foto' : 'forma', v => mut(pl => { pl.furniture[id].look = v; })));
+        else sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn', text: 'Usa la foto vera nel 3D', onclick: async () => {
+          const c = await CM.photoAI.cutoutSmart(f.img);
+          if (!c.ok) { U().toast(c.err || 'Non riesco a togliere lo sfondo: prova con una foto su fondo chiaro (o imposta l\u2019AI)'); return; }
+          mut(pl => { const t = pl.furniture[id]; if (t) { t.cutout = c.img; t.cutoutAspect = c.aspect; t.look = 'foto'; } });
+        } })]));
+      }
     }
     if (f.shape === 'composite') {
       sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn primary', html: U().icon('arredo', 18) + 'Modifica la composizione', onclick: () => CM.config.open(f, nf => mut(pl => { const t = pl.furniture[id]; if (!t) return; ['modules', 'front', 'handle', 'metal', 'worktop', 'body', 'mount', 'components', 'w', 'd', 'h', 'price', 'color', 'name'].forEach(k => { if (nf[k] !== undefined) t[k] = CM.clone(nf[k]); }); })) })]));
