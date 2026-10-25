@@ -533,7 +533,8 @@
       sheet.appendChild(f2);
       CM.sheets.roomFinish(sheet, ctx, sel.id);
       sheet.appendChild(el('div', { class: 'actions' }, [
-        el('button', { class: 'btn', text: 'Consigli d’arredo (AI)', onclick: () => CM.share.layoutAdvice(project, sel.id) }),
+        el('button', { class: 'btn primary', html: U.icon('spark', 18) + 'Arreda con l’AI', onclick: () => CM.roomAI.furnish(sel.id) }),
+        el('button', { class: 'btn', text: 'Inserisci un progetto (IKEA, PDF, foto)', onclick: () => CM.roomAI.importPlan(sel.id) }),
         el('button', { class: 'btn', text: 'Foto / diario', onclick: () => CM.tabs.addDiary({ room: sel.id }) }),
         el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina stanza', onclick: () => { editor.deleteSelection(); U.toast('Stanza eliminata · puoi annullare'); } })
       ]));
@@ -569,6 +570,8 @@
         });
         sheet.appendChild(list);
       }
+      const faces = P.wallFaces(plan, sel.id);
+      if (faces.length === 2) sheet.appendChild(el('div', { class: 'stats' }, faces.map(fc => U.stat(fc.room && plan.rooms[fc.room] ? 'Lato ' + plan.rooms[fc.room].name : 'Lato esterno', CM.fmt.m(fc.len))).concat([U.stat('Asse del muro', CM.fmt.m(L)), U.stat('Spessore', Math.round(w.t * 100) + ' cm')])));
       const ops = Object.keys(plan.openings).filter(o => plan.openings[o].wall === sel.id).length;
       const wsf = P.wallSurface(plan, sel.id);
       sheet.appendChild(el('div', { class: 'stats' }, [
@@ -1256,6 +1259,152 @@
     } else return null;
     return set;
   }
+  /* ---------- Menu rotondo intorno all'oggetto selezionato (pianta) ---------- */
+  let radialKey = '', radialRaf = 0;
+  function radialItems(sel) {
+    const plan = editor.plan, pick = () => sel;
+    void pick;
+    const props = () => { U.setPanelMin(false); const s = $('sheet').querySelector('.personal, .sec-title'); if (s) s.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
+    if (sel.type === 'furniture') return [
+      { icon: 'brush', t: 'Colore e finiture', run: props },
+      { icon: 'rotate', t: 'Ruota di 90\u00b0', run: () => editor.rotateSelected(90) },
+      { icon: 'spark', t: 'Abbina il resto con l\u2019AI', ai: true, run: () => CM.inspire && CM.inspire.matchFromItem(persCtx(), sel.id) },
+      { icon: 'copy', t: 'Duplica', run: duplicateSel },
+      { icon: 'trash', t: 'Elimina', danger: true, run: () => { editor.deleteSelection(); U.toast('Eliminato \u00b7 puoi annullare'); } }
+    ];
+    if (sel.type === 'room') return [
+      { icon: 'brush', t: 'Stile della stanza', run: () => CM.personal.styleGallery(persCtx(sel.id)) },
+      { icon: 'spark', t: 'Arreda con l\u2019AI', ai: true, run: () => CM.roomAI.furnish(sel.id) },
+      { icon: 'image', t: 'Inserisci un progetto (IKEA, PDF, foto)', run: () => CM.roomAI.importPlan(sel.id) },
+      { icon: 'copy', t: 'Duplica la stanza', run: duplicateSel },
+      { icon: 'trash', t: 'Elimina la stanza', danger: true, run: () => { editor.deleteSelection(); U.toast('Stanza eliminata \u00b7 puoi annullare'); } }
+    ];
+    if (sel.type === 'opening') {
+      const o = plan.openings[sel.id];
+      return [
+        { icon: 'flip', t: 'Inverti lato', run: () => editor.mutate(pl => { pl.openings[sel.id].flipSide = !pl.openings[sel.id].flipSide; }, 'flip') },
+        o && o.kind === 'battente' ? { icon: 'hinge', t: 'Cerniera dall\u2019altra parte', run: () => editor.mutate(pl => { pl.openings[sel.id].flipHinge = !pl.openings[sel.id].flipHinge; }, 'flip') } : null,
+        { icon: 'brush', t: 'Modello e colore', run: props },
+        { icon: 'copy', t: 'Duplica', run: duplicateSel },
+        { icon: 'trash', t: 'Elimina', danger: true, run: () => editor.deleteSelection() }
+      ].filter(Boolean);
+    }
+    if (sel.type === 'fixture' || sel.type === 'column') return [
+      { icon: 'copy', t: 'Duplica', run: duplicateSel },
+      { icon: 'trash', t: 'Elimina', danger: true, run: () => editor.deleteSelection() }
+    ];
+    return null;
+  }
+  function updateRadial() {
+    if (radialRaf) return;
+    radialRaf = requestAnimationFrame(() => { radialRaf = 0; drawRadial(); });
+  }
+  function drawRadial() {
+    let box = $('radial');
+    if (!box) { box = el('div', { class: 'radial', id: 'radial' }); $('stage').appendChild(box); }
+    const sel = editor.sel, g = editor.gesture;
+    const items = tab === 'pianta' && editor.tool === 'select' && sel.type ? radialItems(sel) : null;
+    const busy = g && ['drag', 'pan', 'pinch'].includes(g.type);
+    const b = items && editor.boundsOf(sel);
+    if (!items || busy || !b || document.body.classList.contains('kb')) { box.classList.add('hidden'); return; }
+    const key = sel.type + ':' + sel.id;
+    if (key !== radialKey || !box.childNodes.length) {
+      radialKey = key; box.innerHTML = '';
+      items.forEach(it => box.appendChild(el('button', { class: 'rad' + (it.ai ? ' ai' : '') + (it.danger ? ' danger' : ''), title: it.t, 'aria-label': it.t, html: U.icon(it.icon, 20), onclick: (e) => { e.stopPropagation(); it.run(); } })));
+    }
+    box.classList.remove('hidden');
+    const v = editor.view, st = $('stage').getBoundingClientRect();
+    const sh = $('sheet').classList.contains('hidden') ? null : $('sheet').getBoundingClientRect();
+    const x0 = v.x + b.minX * v.s, x1 = v.x + b.maxX * v.s, y0 = v.y + b.minY * v.s, y1 = v.y + b.maxY * v.s;
+    let cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const room = sel.type === 'room';
+    const half = Math.hypot(x1 - x0, y1 - y0) / 2;
+    const r = room ? 62 : Math.max(48, Math.min(half + 30, 150));
+    if (room) { const lp = CM.geom.labelPoint(P.roomPts(editor.plan, editor.plan.rooms[sel.id])); cx = v.x + lp.x * v.s; cy = v.y + lp.y * v.s; }
+    const bottomLimit = sh && sh.top > st.top + 40 && sh.left <= st.left + 10 ? sh.top - st.top : st.height;
+    const n = box.childNodes.length, span = Math.min(Math.PI * 0.9, 0.62 * (n - 1) * 52 / r * 1.1 + 0.2);
+    const up = cy - r > 50;
+    const mid = up ? -Math.PI / 2 : Math.PI / 2;
+    [...box.childNodes].forEach((btn, i) => {
+      const a = mid + (n === 1 ? 0 : (i / (n - 1) - 0.5) * span) * (up ? 1 : -1);
+      const x = Math.max(4, Math.min(st.width - 48, cx + r * Math.cos(a) - 22));
+      const y = Math.max(4, Math.min(bottomLimit - 48, cy + r * Math.sin(a) - 22));
+      btn.style.transform = 'translate(' + Math.round(x) + 'px,' + Math.round(y) + 'px)';
+    });
+  }
+
+  /* ---------- Inserisci stanze da un altro progetto o da un file ---------- */
+  function readProjectFile() {
+    return new Promise(resolve => {
+      const input = el('input', { type: 'file', accept: '.json,.casamia,application/json,*/*', style: 'display:none' });
+      document.body.appendChild(input);
+      input.addEventListener('change', () => {
+        const f = input.files[0]; input.remove();
+        if (!f) return resolve(null);
+        if (/^image\/|pdf$/i.test(f.type || '')) { U.toast('Questa \u00e8 un\u2019immagine: per un disegno usa \u201cPlanimetria\u201d'); return resolve(null); }
+        const r = new FileReader();
+        r.onload = () => {
+          try {
+            const d = JSON.parse(String(r.result).replace(/^\uFEFF/, ''));
+            const raw = d.type === 'casamia-progetto' && d.project ? d.project : d.type === 'casamia-backup' && d.projects && d.projects.length ? d.projects[0] : (d.variants || d.plan ? d : null);
+            if (!raw) throw new Error('no');
+            // materiali e articoli del file, così pavimenti e mobili si vedono uguali
+            const merge = (key, list) => { if (!list || !list.length) return; const cur = S.getJSON(key, []); const ids = new Set(cur.map(x => x.id)); S.putJSON(key, cur.concat(list.filter(x => !ids.has(x.id)))); };
+            merge('materiali', d.materials); merge('catalogo', d.catalog);
+            resolve(CM.project.normalize(raw));
+          } catch (e) { U.toast('File non riconosciuto: serve un progetto di Casa Mia'); resolve(null); }
+        };
+        r.onerror = () => { U.toast('Non riesco a leggere il file'); resolve(null); };
+        r.readAsText(f);
+      });
+      input.click();
+    });
+  }
+  async function insertRooms() {
+    const others = S.listProjects().filter(p => p.id !== project.id);
+    const src = await U.menu('Inserisci stanze da\u2026', [
+      { id: 'file', label: 'Un file di progetto (ricevuto o salvato)', icon: 'opening' }
+    ].concat(others.slice(0, 12).map(p => ({ id: 'p:' + p.id, label: p.name, icon: 'house' }))));
+    if (!src) return;
+    const sp = src === 'file' ? await readProjectFile() : S.loadProject(src.slice(2));
+    if (!sp) return;
+    const plan = CM.project.plan(sp);
+    const ids = Object.keys(plan.rooms);
+    if (!ids.length) { U.toast('In quel progetto non ci sono stanze'); return; }
+    const chosen = new Set(ids.length === 1 ? ids : []);
+    let withFurn = true;
+    const body = el('div');
+    const draw = () => {
+      body.innerHTML = '';
+      body.append(
+        el('div', { class: 'actions', style: 'margin:0 0 6px' }, [
+          el('button', { class: 'btn small', text: 'Tutte', onclick: () => { ids.forEach(i => chosen.add(i)); draw(); } }),
+          el('button', { class: 'btn small', text: 'Nessuna', onclick: () => { chosen.clear(); draw(); } })
+        ]),
+        el('div', { class: 'check-list' }, ids.map(i => {
+          const r = plan.rooms[i];
+          return el('label', { class: 'check' }, [el('input', { type: 'checkbox', checked: chosen.has(i), onchange: (e) => { if (e.target.checked) chosen.add(i); else chosen.delete(i); } }), el('span', { text: r.name + ' \u00b7 ' + CM.fmt.area(P.roomStats(plan, r).net) })]);
+        })),
+        el('label', { class: 'check', style: 'margin-top:8px' }, [el('input', { type: 'checkbox', checked: withFurn, onchange: (e) => { withFurn = e.target.checked; } }), el('span', { text: 'Con mobili e impianti' })])
+      );
+    };
+    draw();
+    const ok = await U.dialog({ title: 'Quali stanze di \u201c' + sp.name + '\u201d?', text: 'Vengono inserite con muri, porte, finestre e finiture. Poi le sposti dove vuoi.', body, actions: [{ label: 'Annulla', value: null }, { label: 'Inserisci', value: true, primary: true }] });
+    if (!ok || !chosen.size) return;
+    const set = { nodes: [], walls: [], rooms: [], furniture: [], fixtures: [], columns: [], beams: [] };
+    for (const rid of chosen) {
+      const s1 = selSet(plan, { type: 'room', id: rid });
+      for (const k in set) for (const x of s1[k]) if (!set[k].includes(x)) set[k].push(x);
+    }
+    if (!withFurn) { set.furniture = []; set.fixtures = []; }
+    const bb = P.setBounds(plan, set), cur = P.bounds(Object.assign({}, editor.plan, { underlay: null }));
+    const dx = cur && bb ? CM.r3(cur.maxX + 1 - bb.x0) : (bb ? -bb.x0 : 0), dy = cur && bb ? CM.r3(cur.minY - bb.y0) : (bb ? -bb.y0 : 0);
+    let out; editor.mutate(pl => { out = P.copySet(plan, pl, set, dx, dy); }, 'insert');
+    setTab('pianta');
+    editor.setTool('multi'); editor.setMulti(out); buildTools(); renderSheet(); editor.fit();
+    U.toast(chosen.size === 1 ? 'Stanza inserita a destra: trascina il riquadro blu dove vuoi' : chosen.size + ' stanze inserite a destra: trascina il riquadro blu dove vuoi');
+  }
+
   function selectPasted(out) {
     const one = (k, t) => out[k].length === 1 && P.setCount(out) === 1 ? { type: t, id: out[k][0] } : null;
     const s1 = one('furniture', 'furniture') || one('fixtures', 'fixture') || one('columns', 'column') || one('beams', 'beam') || one('walls', 'wall') ||
@@ -1422,6 +1571,8 @@
       { id: 'assistant', label: 'Assistente', icon: 'spark' },
       { id: 'share', label: 'Condividi con altre persone', icon: 'share' },
       CM.clipboard ? { id: 'paste', label: 'Incolla gli elementi copiati', icon: 'copy' } : null,
+      { id: 'insertplan', label: 'Inserisci un progetto di stanza (IKEA, Planner 5D, PDF, foto)', icon: 'image' },
+      { id: 'insert', label: 'Inserisci stanze da un altro progetto', icon: 'room' },
       { id: 'trim', label: 'Porte, finestre e battiscopa', icon: 'opening' },
       { id: 'tavole', label: 'Tavole in scala (PDF per geometra e ditte)', icon: 'ruler' },
       { id: 'pdf', label: 'Esporta PDF riepilogo', icon: 'opening' },
@@ -1462,6 +1613,8 @@
         editor.setTool('multi'); editor.setMulti(out); buildTools(); renderSheet(); editor.fit();
         return U.toast('Incollato: trascina il riquadro blu dove vuoi');
       }
+      case 'insert': return insertRooms();
+      case 'insertplan': return CM.roomAI.importPlan();
       case 'trim': return CM.trim.houseDialog((fn) => editor.mutate(fn, 'style'), () => editor.plan);
       case 'pdf': return CM.share.pdf(project);
       case 'img': return CM.share.file('pianta-' + project.name.replace(/\W+/g, '-') + '.png', 'image/png', CM.share.planImage(project), true);
@@ -1653,6 +1806,7 @@
     setVariant,
     focus: focusSel,
     straighten: (img) => straightenDialog(img),
+    selectSet: (set) => { setTab('pianta'); editor.setTool('multi'); editor.setMulti(set); buildTools(); renderSheet(); },
     placeItem: (it) => { setTab('pianta'); sheetMode = null; editor.setPendingItem(it); buildTools(); renderSheet(); },
     snapshot3d: (needOpen) => {
       if (view3d && view3d.ready && view3d.project === project) return view3d.snapshot();
@@ -1690,7 +1844,7 @@
       onPlaced: () => { if (tab === 'pianta') U.toast('Inserito \u00b7 tocca ancora per aggiungerne un altro, \u201cFine\u201d per smettere'); },
       onHistory: (u, r) => { $('undoBtn').disabled = !u; $('redoBtn').disabled = !r; },
       onToast: (t) => U.toast(t),
-      onDraw: (view) => updateScale(view),
+      onDraw: (view) => { updateScale(view); updateRadial(); },
       onCalibrate,
       onCalibPick: () => askCalibration(),
       onCrop,

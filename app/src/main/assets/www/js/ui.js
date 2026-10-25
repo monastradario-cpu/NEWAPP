@@ -22,6 +22,8 @@
   }
 
   const ICONS = {
+    brush: '<path d="M4 5h12v5H4z"/><path d="M16 7h3v6h-8v3"/><path d="M10 16h2v5h-2z"/>',
+    rotate: '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/>',
     cube: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
     select: '<path d="M5 3l14 8-6 2-3 6z"/>',
     room: '<rect x="4" y="5" width="16" height="14" rx="1"/><path d="M4 9h3M17 19v-3"/>',

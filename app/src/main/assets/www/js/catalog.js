@@ -122,7 +122,18 @@
     F('vialetto', 'Vialetto', 'esterni', 1.00, 4.00, 0.03, 'path', '#C9C2B4'),
     F('recinzione', 'Recinzione', 'esterni', 3.00, 0.06, 1.20, 'fence', '#8A7A66'),
     F('cancello', 'Cancello', 'esterni', 3.00, 0.08, 1.60, 'fence', '#3A3F46'),
-    F('aiuola', 'Aiuola', 'esterni', 2.00, 0.80, 0.30, 'hedge', '#7FA05F')
+    F('aiuola', 'Aiuola', 'esterni', 2.00, 0.80, 0.30, 'hedge', '#7FA05F'),
+    // Modelli 3D realistici (scaricati quando servono; Creative Commons BY 4.0, Wayfair e DGG / Khronos)
+    F('r3d-divano-velluto', 'Divano in velluto (3D realistico)', 'soggiorno', 2.19, 1.02, 0.79, 'sofa', '#C9A0A8', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/GlamVelvetSofa/glTF-Binary/GlamVelvetSofa.glb', store: 'Wayfair · CC BY 4.0', real3d: true }),
+    F('r3d-divano-pelle', 'Divano in pelle e legno (3D realistico)', 'soggiorno', 2.73, 0.92, 1.12, 'sofa', '#7A5638', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SheenWoodLeatherSofa/glTF-Binary/SheenWoodLeatherSofa.glb', store: 'DGG · CC BY 4.0', real3d: true }),
+    F('r3d-poltrona', 'Poltroncina in velluto (3D realistico)', 'soggiorno', 0.83, 0.57, 0.69, 'armchair', '#8FA48C', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SheenChair/glTF-Binary/SheenChair.glb', store: 'Wayfair · CC BY 4.0', real3d: true }),
+    F('r3d-poltrona-damasco', 'Poltroncina damascata (3D realistico)', 'soggiorno', 0.83, 0.57, 0.69, 'armchair', '#6E4A7A', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/ChairDamaskPurplegold/glTF-Binary/ChairDamaskPurplegold.glb', store: 'Wayfair · CC BY 4.0', real3d: true }),
+    F('r3d-pouf', 'Pouf basso in seta (3D realistico)', 'soggiorno', 0.61, 0.61, 0.20, 'box', '#C9B8A3', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SpecularSilkPouf/glTF-Binary/SpecularSilkPouf.glb', store: 'Wayfair · CC BY 4.0', real3d: true }),
+    F('r3d-lampada-arco', 'Lampada da terra ad arco (3D realistico)', 'illuminazione', 1.13, 0.72, 1.86, 'lamp_floor', '#2B2E33', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/LightsPunctualLamp/glTF-Binary/LightsPunctualLamp.glb', store: 'DGG · CC BY 4.0', real3d: true, light: true }),
+    F('r3d-sospensione', 'Lampada a sospensione industriale (3D realistico)', 'illuminazione', 0.30, 0.36, 0.40, 'lamp_ceiling', '#3A3F46', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/AnisotropyBarnLamp/glTF-Binary/AnisotropyBarnLamp.glb', store: 'Wayfair · CC BY 4.0', real3d: true, light: true, elev: 2.0 }),
+    F('r3d-lampada-tavolo', 'Lampada da tavolo iridescente (3D realistico)', 'illuminazione', 0.30, 0.30, 0.48, 'lamp_floor', '#D8D2C4', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/IridescenceLamp/glTF-Binary/IridescenceLamp.glb', store: 'Wayfair · CC BY 4.0', real3d: true, light: true, elev: 0.75 }),
+    F('r3d-pianta', 'Pianta in vaso (3D realistico)', 'decorazioni', 0.70, 0.66, 0.84, 'plant', '#5E8C61', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DiffuseTransmissionPlant/glTF-Binary/DiffuseTransmissionPlant.glb', store: 'DGG · CC BY 4.0', real3d: true }),
+    F('r3d-vaso-fiori', 'Vaso di vetro con fiori (3D realistico)', 'decorazioni', 0.33, 0.21, 0.30, 'plant', '#C9D3C4', { model: 'url:https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/GlassVaseFlowers/glTF-Binary/GlassVaseFlowers.glb', store: 'Khronos · CC BY 4.0', real3d: true, elev: 0.75 })
   ];
 
   /* ---------- Materiali base (prezzi indicativi, modificabili) ---------- */

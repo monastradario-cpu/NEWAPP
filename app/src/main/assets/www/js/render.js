@@ -319,7 +319,21 @@
           const w = plan.walls[id];
           const A = plan.nodes[w.a], B = plan.nodes[w.b];
           const off = w.t * v.s / 2 + 9;
-          dimLabel(ctx, v, A, B, off, CM.fmt.num(G.dist(A, B), 2), isSel ? C.accent : C.muted, isSel, boxes);
+          if (isSel && P.wallFaces) {
+            // muro selezionato: lunghezza di ogni faccia (interna ed esterna), come la misuri col metro
+            for (const fc of P.wallFaces(plan, id)) {
+              if (fc.len < 0.05) continue;
+              const a = toS(v, fc.a), b = toS(v, fc.b), l = Math.hypot(b.x - a.x, b.y - a.y);
+              if (l < 30) continue;
+              const nx = -(b.y - a.y) / l * fc.side, ny = (b.x - a.x) / l * fc.side, o = 16;
+              ctx.save(); ctx.strokeStyle = C.accent; ctx.lineWidth = 1.2;
+              ctx.beginPath(); ctx.moveTo(a.x + nx * o, a.y + ny * o); ctx.lineTo(b.x + nx * o, b.y + ny * o);
+              for (const p of [a, b]) { ctx.moveTo(p.x + nx * 4, p.y + ny * 4); ctx.lineTo(p.x + nx * (o + 5), p.y + ny * (o + 5)); }
+              ctx.stroke(); ctx.restore();
+              const room = fc.room && plan.rooms[fc.room];
+              dimLabel(ctx, v, fc.a, fc.b, fc.side * o, CM.fmt.num(fc.len, 2) + (room ? '' : ' est.'), C.accent, true, boxes);
+            }
+          } else dimLabel(ctx, v, A, B, off, CM.fmt.num(G.dist(A, B), 2), isSel ? C.accent : C.muted, isSel, boxes);
         }
       }
       // Maniglie dei vertici

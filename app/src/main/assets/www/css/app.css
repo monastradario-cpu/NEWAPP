@@ -566,3 +566,11 @@ body.panel-min .sheet, body.panel-min .v3d-panel { max-height: 86px; overflow: h
 .ral-grid .ral .swatch { width: 28px; height: 28px; flex-shrink: 0; }
 .colordlg .seg { margin-bottom: 4px; }
 .swatch.more span { font-size: 10px; text-shadow: none; color: var(--ink); }
+
+/* Menu rotondo sull'oggetto selezionato */
+.radial { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.radial.hidden { display: none; }
+.radial .rad { position: absolute; left: 0; top: 0; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); background: #fff; color: var(--ink); box-shadow: 0 4px 14px rgba(27,30,34,0.18); display: flex; align-items: center; justify-content: center; pointer-events: auto; cursor: pointer; transition: transform .12s ease-out; }
+.radial .rad:hover { background: var(--sheet); }
+.radial .rad.ai { color: #6D3FD9; border-color: #B9A4F2; box-shadow: 0 0 0 3px rgba(109,63,217,0.15), 0 4px 14px rgba(27,30,34,0.18); }
+.radial .rad.danger { color: #C0392B; }

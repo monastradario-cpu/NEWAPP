@@ -848,9 +848,18 @@
       if (c && c.obj) return c.obj;
       if (c) return null; // in caricamento o non disponibile
       this._models[id] = { loading: true };
+      // modelli del catalogo: scaricati quando servono e tenuti in memoria (si usano anche dalla cache del browser)
+      if (/^url:/.test(id)) {
+        CM._mdlCache = CM._mdlCache || {};
+        const url = id.slice(4);
+        const p = CM._mdlCache[url] || (CM._mdlCache[url] = fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }).then(b => CM.glb.parse(new Uint8Array(b))));
+        p.then(obj => { this._models[id] = { obj }; CM.glb.info[id] = { variants: obj.userData.variants || [] }; if (this.project) this.build(this.project); })
+          .catch(e => { delete CM._mdlCache[url]; this._models[id] = { failed: true, err: String(e.message || e) }; });
+        return null;
+      }
       const data = CM.store.getRaw('mdl_' + id);
       if (!data) { this._models[id] = { failed: true }; return null; }
-      CM.glb.parse(CM.glb.fromDataUrl(data)).then(obj => { this._models[id] = { obj }; if (this.project) this.build(this.project); })
+      CM.glb.parse(CM.glb.fromDataUrl(data)).then(obj => { this._models[id] = { obj }; CM.glb.info[id] = { variants: obj.userData.variants || [] }; if (this.project) this.build(this.project); })
         .catch(e => { console.warn && 0; this._models[id] = { failed: true, err: String(e.message || e) }; });
       return null;
     }
@@ -963,7 +972,9 @@
       if (f.model && CM.glb) {
         const mdl = this._model(f.model);
         if (mdl) {
-          const obj = CM.glb.fit(mdl.clone(true), W, D, H);
+          const cl = mdl.clone(true);
+          if (CM.glb.setVariant) CM.glb.setVariant(cl, f.variant);
+          const obj = CM.glb.fit(cl, W, D, H);
           g.add(obj);
           g.position.set(f.x, f.elev || 0, f.y); g.rotation.y = -(f.rot || 0);
           this.group.add(g);

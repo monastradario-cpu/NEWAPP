@@ -124,7 +124,14 @@
       sheet.appendChild(el('div', { class: 'sec-title', text: 'Personalizza' }));
       sheet.appendChild(CM.personal.furnitureControls(f, fn => mut(pl => { if (pl.furniture[id]) fn(pl.furniture[id]); })));
     }
-    if (f.model) sheet.appendChild(el('p', { class: 'muted small', text: '\u2713 Nel 3D usa il modello vero del negozio.' }));
+    if (f.model) {
+      const inf = CM.glb && CM.glb.info[f.model];
+      if (inf && inf.variants && inf.variants.length) {
+        sheet.appendChild(el('div', { class: 'sec-title', text: 'Versione del modello' }));
+        sheet.appendChild(el('div', { class: 'chips-row wrap' }, [{ i: null, n: 'Originale' }].concat(inf.variants.map((n, i) => ({ i, n: CM.glb.variantLabel(n) }))).map(v => el('button', { class: 'chip small' + ((f.variant == null ? null : f.variant) === v.i ? ' active' : ''), text: v.n, onclick: () => mut(pl => { const t = pl.furniture[id]; if (v.i == null) delete t.variant; else t.variant = v.i; }) }))));
+      }
+      sheet.appendChild(el('p', { class: 'muted small', text: f.store && /CC BY/.test(f.store) ? '\u2713 Modello 3D realistico (' + f.store + ').' : '\u2713 Nel 3D usa il modello vero del negozio.' }));
+    }
     const acts = [
       el('button', { class: 'btn', html: U().icon('flip', 18) + 'Ruota 90°', onclick: () => ctx.editor.rotateSelected(90) }),
       el('button', { class: 'btn', text: 'Ruota 15°', onclick: () => ctx.editor.rotateSelected(15) }),

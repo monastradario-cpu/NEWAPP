@@ -365,7 +365,7 @@
       log,
       el('div', { class: 'chat-input' }, [input, el('button', { class: 'btn primary', text: 'Invia', onclick: () => { const t = input.value; input.value = ''; send(t); } })]),
       el('div', { class: 'actions' }, [
-        el('button', { class: 'btn small', text: 'Consigli d’arredo', onclick: () => { U().closeOverlay(); SH.layoutAdvice(project); } }),
+        el('button', { class: 'btn small', text: 'Consigli d’arredo', onclick: () => { U().closeOverlay(); CM.roomAI.furnish(); } }),
         el('button', { class: 'btn small', text: 'Render fotorealistico', onclick: () => { U().closeOverlay(); SH.render(project); } }),
         el('button', { class: 'btn small', text: 'Cancella chat', onclick: () => { project.chat = []; app().save(); renderLog(); } })
       ])

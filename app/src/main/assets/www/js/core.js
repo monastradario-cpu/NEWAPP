@@ -284,6 +284,54 @@
   };
 
   P.wallEnds = function (plan, w) { return [plan.nodes[w.a], plan.nodes[w.b]]; };
+
+  // Le due facce di un muro (lato +normale e lato −normale) con la loro lunghezza vera:
+  // la faccia interna di un angolo è più corta dell'asse, quella esterna più lunga.
+  P.wallFaces = function (plan, id) {
+    const w = plan.walls[id];
+    if (!w) return [];
+    const A = plan.nodes[w.a], B = plan.nodes[w.b];
+    const L = G.dist(A, B);
+    if (L < 1e-6) return [];
+    const u = { x: (B.x - A.x) / L, y: (B.y - A.y) / L }, n = { x: -u.y, y: u.x };
+    const h = (w.t || 0.1) / 2;
+    const cross = (a, b) => a.x * b.y - a.y * b.x, dot = (a, b) => a.x * b.x + a.y * b.y;
+    // parametro lungo l'asse dove la faccia (lato s) incontra il muro vicino al nodo
+    const trim = (nid, s, atStart) => {
+      const N = plan.nodes[nid];
+      const dir = atStart ? u : { x: -u.x, y: -u.y };
+      const side = { x: n.x * s, y: n.y * s };
+      let best = null, bestPhi = Infinity;
+      for (const oid of P.wallsOfNode(plan, nid)) {
+        if (oid === id) continue;
+        const o = plan.walls[oid];
+        const other = plan.nodes[o.a === nid ? o.b : o.a];
+        const ol = G.dist(N, other); if (ol < 1e-6) continue;
+        const d = { x: (other.x - N.x) / ol, y: (other.y - N.y) / ol };
+        let phi = Math.atan2(dot(d, side), dot(d, dir)); if (phi <= 1e-6) phi += Math.PI * 2;
+        if (phi < bestPhi) { bestPhi = phi; best = { d, t: o.t || 0.1 }; }
+      }
+      const base = atStart ? 0 : L;
+      if (!best) return base;
+      const d = best.d;
+      if (Math.abs(cross(dir, d)) < 1e-3) return base; // muro che prosegue dritto
+      const no = { x: -d.y, y: d.x };
+      const so = (dot(no, dir) > 0 ? 1 : -1) * (dot(d, side) >= 0 ? 1 : -1);
+      // faccia del muro vicino rivolta verso il nostro lato
+      const P0 = { x: A.x + side.x * h, y: A.y + side.y * h };
+      const Q0 = { x: N.x + no.x * so * best.t / 2, y: N.y + no.y * so * best.t / 2 };
+      const den = cross(u, d);
+      const t = cross({ x: Q0.x - P0.x, y: Q0.y - P0.y }, d) / den;
+      return isFinite(t) && Math.abs(t - base) < 3 ? t : base;
+    };
+    const mid = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+    return [1, -1].map(s => {
+      const t0 = trim(w.a, s, true), t1 = trim(w.b, s, false);
+      const off = { x: n.x * s * h, y: n.y * s * h };
+      const room = P.roomOf(plan, { x: mid.x + n.x * s * (h + 0.06), y: mid.y + n.y * s * (h + 0.06) });
+      return { side: s, len: Math.max(0, t1 - t0), a: { x: A.x + u.x * t0 + off.x, y: A.y + u.y * t0 + off.y }, b: { x: A.x + u.x * t1 + off.x, y: A.y + u.y * t1 + off.y }, room };
+    });
+  };
   P.wallLen = function (plan, w) {
     if (typeof w === 'string') w = plan.walls[w];
     return G.dist(plan.nodes[w.a], plan.nodes[w.b]);

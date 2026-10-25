@@ -44,8 +44,9 @@
     const q = state.q.trim().toLowerCase();
     let list = state.cat === 'materiali' ? CM.lib.materials()
       : state.cat === 'miei' ? CM.lib.catalog().filter(i => !i.base).concat(CM.lib.materials().filter(m => !CM.MATERIALS_BASE.includes(m)))
+      : state.cat === 'real3d' ? CM.lib.catalog().filter(i => i.real3d || (i.model && !i.base))
       : CM.lib.catalog().concat(CM.lib.materials());
-    if (!['tutti', 'miei', 'materiali'].includes(state.cat)) list = list.filter(i => i.cat === state.cat);
+    if (!['tutti', 'miei', 'materiali', 'real3d'].includes(state.cat)) list = list.filter(i => i.cat === state.cat);
     if (q) list = list.filter(i => (i.name + ' ' + (i.store || '') + ' ' + CM.categoryLabel(i.cat)).toLowerCase().includes(q));
     return list;
   }
@@ -75,7 +76,7 @@
     const search = el('input', { type: 'search', class: 'search', placeholder: 'Cerca: divano, gres, frigorifero…', value: state.q, 'aria-label': 'Cerca nel catalogo' });
     const chips = el('div', { class: 'chips-row' });
     const list = el('div', { class: 'item-list' });
-    const cats = [{ id: 'tutti', label: 'Tutto' }, { id: 'miei', label: 'I miei articoli' }].concat(CM.CATEGORIES);
+    const cats = [{ id: 'tutti', label: 'Tutto' }, { id: 'real3d', label: '\u2728 3D realistici' }, { id: 'miei', label: 'I miei articoli' }].concat(CM.CATEGORIES);
     const renderChips = () => {
       chips.innerHTML = '';
       for (const c of cats) chips.appendChild(el('button', { class: 'chip small' + (state.cat === c.id ? ' active' : ''), text: c.label, onclick: () => { state.cat = c.id; renderChips(); renderList(); } }));
@@ -100,6 +101,7 @@
       el('h1', { text: 'Arredo e materiali' }),
       el('div', { class: 'actions', style: 'margin:0' }, [
         el('button', { class: 'btn primary', html: U().icon('opening', 18) + 'Importa da negozio', onclick: () => CM.shop.open() }),
+        el('button', { class: 'btn', html: U().icon('image', 18) + 'Da progetto IKEA, PDF o foto', onclick: () => CM.roomAI.importPlan() }),
         el('button', { class: 'btn', html: U().icon('arredo', 18) + 'Componi armadio o cucina', onclick: () => CM.config.open(null, f => { const it = Object.assign({ id: CM.uid('c') }, f); CM.lib.saveItem(it); app().placeItem(it); U().toast('Tocca dove metterla: vicino a un muro si appoggia da sola'); }) }),
         el('button', { class: 'btn', text: 'Nuovo articolo', onclick: async () => {
           const c = await U().menu('Nuovo articolo', [{ id: 'mobile', label: 'Mobile o oggetto', icon: 'room' }, { id: 'piastrella', label: 'Piastrella o pavimento', icon: 'grid' }, { id: 'pittura', label: 'Pittura', icon: 'rename' }, { id: 'carta', label: 'Carta da parati', icon: 'beam' }]);

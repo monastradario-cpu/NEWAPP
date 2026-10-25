@@ -49,7 +49,7 @@
     const texture = (i, srgb) => {
       const key = i + (srgb ? 's' : 'l');
       if (texCache[key]) return texCache[key];
-      const tx = json.textures[i], img = json.images[tx.source];
+      const tx = json.textures[i], ext = tx.extensions || {}, src = tx.source != null ? tx.source : ((ext.EXT_texture_webp || ext.KHR_texture_basisu || {}).source), img = json.images[src];
       if (!img || img.bufferView == null) return null;
       const blob = new Blob([view(img.bufferView)], { type: img.mimeType || 'image/png' });
       const url = URL.createObjectURL(blob);
@@ -65,15 +65,42 @@
       texCache[key] = t;
       return t;
     };
+    // KHR_texture_transform: scala/sposta/ruota la texture (usato da molti modelli dei negozi)
+    const tx = (info, srgb) => {
+      let t = texture(info.index, srgb);
+      const tt = info.extensions && info.extensions.KHR_texture_transform;
+      if (t && tt) {
+        const c = t.clone(); c.ready = t.ready;
+        t.ready && t.ready.then(() => { c.image = t.image; c.needsUpdate = true; });
+        if (tt.scale) c.repeat.set(tt.scale[0], tt.scale[1]);
+        if (tt.offset) c.offset.set(tt.offset[0], tt.offset[1]);
+        if (tt.rotation) c.rotation = -tt.rotation;
+        c.needsUpdate = true;
+        t = c;
+      }
+      return t;
+    };
     const mats = (json.materials || []).map(m => {
       const pbr = m.pbrMetallicRoughness || {};
       const c = pbr.baseColorFactor || [1, 1, 1, 1];
       const o = { color: new T.Color(c[0], c[1], c[2]), metalness: pbr.metallicFactor == null ? 1 : pbr.metallicFactor, roughness: pbr.roughnessFactor == null ? 1 : pbr.roughnessFactor, side: m.doubleSided ? T.DoubleSide : T.FrontSide };
-      if (pbr.baseColorTexture) o.map = texture(pbr.baseColorTexture.index, true);
-      if (pbr.metallicRoughnessTexture) { const t = texture(pbr.metallicRoughnessTexture.index, false); o.metalnessMap = t; o.roughnessMap = t; }
-      if (m.normalTexture) o.normalMap = texture(m.normalTexture.index, false);
+      if (pbr.baseColorTexture) o.map = tx(pbr.baseColorTexture, true);
+      if (pbr.metallicRoughnessTexture) { const t = tx(pbr.metallicRoughnessTexture, false); o.metalnessMap = t; o.roughnessMap = t; }
+      if (m.normalTexture) o.normalMap = tx(m.normalTexture, false);
+      if (m.emissiveTexture) { o.emissiveMap = tx(m.emissiveTexture, true); o.emissive = new T.Color(1, 1, 1); }
+      if (m.emissiveFactor && !m.emissiveTexture) o.emissive = new T.Color(m.emissiveFactor[0], m.emissiveFactor[1], m.emissiveFactor[2]);
+      if (m.occlusionTexture) o.aoMap = tx(m.occlusionTexture, false);
       if (m.alphaMode === 'BLEND' || c[3] < 1) { o.transparent = true; o.opacity = c[3]; }
       if (m.alphaMode === 'MASK') o.alphaTest = m.alphaCutoff == null ? 0.5 : m.alphaCutoff;
+      // estensioni dei materiali: velluto (sheen), iridescenza, vetro (transmission)
+      const ex = m.extensions || {};
+      const sh = ex.KHR_materials_sheen, ir = ex.KHR_materials_iridescence, tr = ex.KHR_materials_transmission;
+      if ((sh || ir || tr) && T.MeshPhysicalMaterial) {
+        if (sh) { const sc = sh.sheenColorFactor || [0, 0, 0]; o.sheen = 1; o.sheenColor = new T.Color(sc[0], sc[1], sc[2]); o.sheenRoughness = sh.sheenRoughnessFactor == null ? 0 : sh.sheenRoughnessFactor; if (sh.sheenColorTexture) o.sheenColorMap = tx(sh.sheenColorTexture, true); }
+        if (ir) { o.iridescence = ir.iridescenceFactor == null ? 0 : ir.iridescenceFactor; o.iridescenceIOR = ir.iridescenceIor || 1.3; o.iridescenceThicknessRange = [ir.iridescenceThicknessMinimum || 100, ir.iridescenceThicknessMaximum || 400]; }
+        if (tr && (tr.transmissionFactor || 0) > 0) { o.transparent = true; o.opacity = Math.max(0.25, 1 - 0.7 * tr.transmissionFactor); o.roughness = Math.min(o.roughness, 0.2); o.depthWrite = false; }
+        return new T.MeshPhysicalMaterial(o);
+      }
       return new T.MeshStandardMaterial(o);
     });
     const defMat = new T.MeshStandardMaterial({ color: '#cccccc', roughness: 0.8 });
@@ -93,6 +120,9 @@
         if (p.attributes.NORMAL == null) geo.computeVertexNormals();
         const mesh = new T.Mesh(geo, p.material != null ? mats[p.material] : defMat);
         mesh.castShadow = true; mesh.receiveShadow = true;
+        // varianti del prodotto (tessuti, colori): ricordate per geometria
+        const vm = p.extensions && p.extensions.KHR_materials_variants;
+        if (vm && vm.mappings) { const map = { def: mesh.material }; for (const mp of vm.mappings) for (const vi of mp.variants || []) map[vi] = mats[mp.material]; VARIANTS.set(geo, map); }
         g.add(mesh);
       }
       meshCache[mi] = g;
@@ -111,11 +141,22 @@
       return o;
     };
     const root = new T.Group();
+    const vlist = json.extensions && json.extensions.KHR_materials_variants && json.extensions.KHR_materials_variants.variants;
+    if (vlist) root.userData.variants = vlist.map(v => v.name || '');
     const sc = json.scenes ? json.scenes[json.scene || 0] : { nodes: json.nodes.map((n, i) => i) };
     sc.nodes.forEach(ni => root.add(buildNode(ni)));
     const waits = Object.values(texCache).map(t => t.ready);
     return Promise.all(waits).then(() => root);
   };
+
+  // Varianti (KHR_materials_variants): geometria -> { def, 0: mat, 1: mat ... }
+  const VARIANTS = new WeakMap();
+  GL.info = {};
+  GL.setVariant = function (obj, idx) {
+    obj.traverse(o => { if (!o.isMesh) return; const m = VARIANTS.get(o.geometry); if (!m) return; o.material = idx == null || m[idx] == null ? m.def : m[idx]; });
+  };
+  // nomi delle varianti in italiano (i più comuni)
+  GL.variantLabel = (n) => String(n || '').replace(/_/g, ' ').replace(/\bvelvet\b/i, 'velluto').replace(/\bleather\b/i, 'pelle').replace(/\bfabric\b/i, 'tessuto').replace(/\bblack\b/i, 'nero').replace(/\bnavy\b/i, 'blu navy').replace(/\bgr[ae]y\b/i, 'grigio').replace(/\bpale ?pink\b/i, 'rosa cipria').replace(/\bpink\b/i, 'rosa').replace(/\bchampagne\b/i, 'champagne').replace(/\bgreen\b/i, 'verde').replace(/\bwhite\b/i, 'bianco').replace(/\bbrown\b/i, 'marrone').replace(/\bred\b/i, 'rosso').replace(/\bblue\b/i, 'blu').replace(/\bgold\b/i, 'oro');
 
   // Adatta il modello alle misure del mobile (larghezza x, profondità z, altezza y), appoggiato a terra e centrato
   GL.fit = function (obj, w, d, h) {
