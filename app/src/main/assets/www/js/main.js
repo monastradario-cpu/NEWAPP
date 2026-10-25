@@ -581,7 +581,19 @@
         sheet.appendChild(list);
       }
       const faces = P.wallFaces(plan, sel.id);
-      if (faces.length === 2) sheet.appendChild(el('div', { class: 'stats' }, faces.map(fc => U.stat(fc.room && plan.rooms[fc.room] ? 'Lato ' + plan.rooms[fc.room].name : 'Lato esterno', CM.fmt.m(fc.len))).concat([U.stat('Asse del muro', CM.fmt.m(L)), U.stat('Spessore', Math.round(w.t * 100) + ' cm')])));
+      // misure delle due facce (quelle che prendi col metro): scrivi la misura e il muro si allunga o si accorcia
+      if (faces.length === 2) {
+        const ff = el('div', { class: 'fields' });
+        faces.forEach(fc => {
+          const lbl = (fc.room && plan.rooms[fc.room] ? 'Lato ' + plan.rooms[fc.room].name : 'Lato esterno') + ' (misura col metro)';
+          ff.appendChild(U.numField(lbl, fc.len, 'm', v => mut(pl => {
+            const cur = P.wallFaces(pl, sel.id).find(x => x.side === fc.side);
+            if (!cur) return;
+            P.stretchWall(pl, sel.id, Math.max(0.05, P.wallLen(pl, sel.id) + (v - cur.len)), editor.stretchSide || 'b');
+          }), { min: 0.05, max: 100 }));
+        });
+        sheet.appendChild(ff);
+      }
       const ops = Object.keys(plan.openings).filter(o => plan.openings[o].wall === sel.id).length;
       const wsf = P.wallSurface(plan, sel.id);
       sheet.appendChild(el('div', { class: 'stats' }, [
