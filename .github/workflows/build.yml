@@ -46,15 +46,18 @@ jobs:
         run: |
           VER="0.1.${{ github.run_number }}"
           cp app/build/outputs/apk/release/app-release.apk "CasaMia-$VER.apk"
-          node tools/build-pc.js "CasaMia-PC-$VER.html"
+          node tools/build-pc.js "CasaMia-PC-$VER.html" "$VER"
+          # copie con nome fisso: il link "ultima versione" non cambia mai
+          cp "CasaMia-$VER.apk" CasaMia.apk
+          cp "CasaMia-PC-$VER.html" CasaMia-PC.html
           echo "VER=$VER" >> $GITHUB_ENV
 
       - uses: actions/upload-artifact@v4
         with:
           name: apk
           path: |
-            CasaMia-*.apk
-            CasaMia-PC-*.html
+            CasaMia*.apk
+            CasaMia-PC*.html
 
   release:
     needs: build
@@ -73,11 +76,14 @@ jobs:
           make_latest: true
           body: |
             Da telefono: scarica il file .apk qui sotto e aprilo per installarlo.
-            Da PC Windows: scarica CasaMia-PC-….html e aprilo con doppio clic (Chrome o Edge).
+            Da PC Windows: scarica CasaMia-PC.html e aprilo con doppio clic (Chrome o Edge).
+            Link fissi, sempre all'ultima versione:
+            https://github.com/monastradario-cpu/NEWAPP/releases/latest/download/CasaMia-PC.html
+            https://github.com/monastradario-cpu/NEWAPP/releases/latest/download/CasaMia.apk
             Commit: ${{ github.sha }}
           files: |
-            CasaMia-*.apk
-            CasaMia-PC-*.html
+            CasaMia*.apk
+            CasaMia-PC*.html
 
   # Versione web (stesso codice dell'app): pubblicata su GitHub Pages dal ramo gh-pages
   web:

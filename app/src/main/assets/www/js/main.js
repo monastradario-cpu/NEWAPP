@@ -1569,7 +1569,8 @@
   /* ---------- Aggiornamento dell'app ---------- */
   const RELEASES_API = 'https://api.github.com/repos/monastradario-cpu/NEWAPP/releases/latest';
   let updateInfo = null, checking = false;
-  function currentVersion() { return S.isNative && window.CasaMiaAndroid.version ? window.CasaMiaAndroid.version() : 'web'; }
+  const PC_FILE = !S.isNative && !!window.CASAMIA_PC_VERSION; // il file CasaMia-PC.html aperto sul computer
+  function currentVersion() { return S.isNative && window.CasaMiaAndroid.version ? window.CasaMiaAndroid.version() : (window.CASAMIA_PC_VERSION || 'web'); }
   function setUpdateUi(state) {
     const b = $('updateBtn');
     b.classList.toggle('busy', state === 'busy');
@@ -1586,8 +1587,9 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const rel = await r.json();
       const ver = String(rel.tag_name || '').replace(/^v/, '');
-      const apk = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
+      const apk = (rel.assets || []).find(a => PC_FILE ? /^CasaMia-PC-[\d.]+\.html$/i.test(a.name) : /\.apk$/i.test(a.name));
       updateInfo = apk && CM.versionNewer(ver, currentVersion()) ? { ver, url: apk.browser_download_url, page: rel.html_url, size: apk.size } : null;
+      if (updateInfo && PC_FILE && !manual && S.pref('pcUpdateSeen') !== ver) { S.pref('pcUpdateSeen', ver); setTimeout(offerUpdate, 800); }
       setUpdateUi();
       if (manual) { if (updateInfo) offerUpdate(); else U.toast('Hai già l’ultima versione (' + currentVersion() + ')'); }
     } catch (e) {
@@ -1599,6 +1601,14 @@
     const u = updateInfo;
     if (!u) return;
     const mb = u.size ? ' (' + CM.fmt.num(u.size / 1048576, 1) + ' MB)' : '';
+    if (PC_FILE) {
+      const ok = await U.dialog({ title: 'È disponibile la versione ' + u.ver, text: 'Stai usando la ' + currentVersion() + '. Scarico il nuovo file' + mb + ': aprilo con doppio clic e chiudi questa finestra. I progetti restano, perché sono salvati nel browser e non nel file.', actions: [{ label: 'Più tardi', value: false }, { label: 'Scarica la nuova versione', value: true, primary: true }] });
+      if (!ok) return;
+      saveNow();
+      const a = el('a', { href: u.url, download: 'CasaMia-PC.html' }); document.body.appendChild(a); a.click(); a.remove();
+      U.dialog({ title: 'Download avviato', text: 'Quando è finito, apri “CasaMia-PC.html” dalla cartella Download (o dalla barra dei download del browser). Consiglio: sostituisci il vecchio file sul Desktop con quello nuovo, così il collegamento resta lo stesso.', actions: [{ label: 'Ho capito', value: true, primary: true }] });
+      return;
+    }
     const ok = await U.dialog({ title: 'È disponibile la versione ' + u.ver, text: 'Stai usando la ' + currentVersion() + '. Scarico l’aggiornamento' + mb + ' e poi Android ti chiede di confermare l’installazione. I tuoi progetti restano salvati.', actions: [{ label: 'Più tardi', value: false }, { label: 'Aggiorna ora', value: true, primary: true }] });
     if (!ok) return;
     saveNow();
@@ -1791,6 +1801,8 @@
     if (first) setTimeout(() => U.tutorial(), 300);
     console.log('CASAMIA_READY ' + (S.isNative ? 'android' : 'browser'));
     if (S.isNative && window.CasaMiaAndroid.takeShared) { try { const sh = window.CasaMiaAndroid.takeShared(); if (sh) setTimeout(() => CM.onShared(sh), 400); } catch (e) { console.error(e); } }
+    if (PC_FILE) setTimeout(() => checkUpdate(false), 2500);
+    if (!S.isNative && !PC_FILE) $('updateBtn').classList.add('hidden'); // la versione web è sempre l'ultima
     if (S.isNative) {
       setTimeout(() => checkUpdate(false), 2500);
       setTimeout(() => CM.shop.syncWatch(), 4000);

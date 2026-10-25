@@ -16,7 +16,7 @@ html = html.replace(/<link[^>]+href="([^"]+\.css)"[^>]*>/g, (m, href) => {
 });
 // script incorporati
 html = html.replace(/<script src="([^"]+)"><\/script>/g, (m, src) => '<script>\n' + read(src).toString('utf8').replace(/<\/script/gi, '<\\/script') + '\n</script>');
-html = html.replace('<head>', '<head>\n<!-- Casa Mia per PC: apri questo file con Chrome o Edge -->');
+html = html.replace('<head>', '<head>\n<!-- Casa Mia per PC: apri questo file con Chrome o Edge -->' + (process.argv[3] ? '\n<script>window.CASAMIA_PC_VERSION = ' + JSON.stringify(process.argv[3]) + ';</script>' : ''));
 const out = process.argv[2] || 'CasaMia-PC.html';
 fs.writeFileSync(out, html);
 console.log('Creato ' + out + ' (' + Math.round(html.length / 1024) + ' KB)');
