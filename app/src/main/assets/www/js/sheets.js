@@ -38,6 +38,53 @@
   }
   SH.moneyField = moneyField;
 
+  /* ---------- Foto del mobile (solo al computer) ----------
+     Trascina un file, incolla (Ctrl+V) un'immagine copiata dal sito del negozio, oppure scegli un file. */
+  CM.isPC = () => !root.CasaMiaAndroid && !!(root.matchMedia && root.matchMedia('(pointer: fine)').matches);
+  CM.imageFromData = async function (dt) {
+    if (!dt) return null;
+    const files = [...(dt.files || [])].filter(f => /^image\//.test(f.type));
+    if (!files.length && dt.items) for (const it of dt.items) if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) files.push(f); }
+    if (files.length) return CM.inspire.shrink(files[0], 600);
+    // immagine trascinata da una pagina web: si prova a scaricarla
+    const html = dt.getData && dt.getData('text/html');
+    const m = html && html.match(/<img[^>]+src="([^"]+)"/i);
+    const url = (m && m[1]) || (dt.getData && (dt.getData('text/uri-list') || '').split('\n')[0].trim());
+    if (url && /^(https?:|data:image)/i.test(url)) {
+      if (/^data:/.test(url)) return CM.inspire.shrink(url, 600);
+      const d = CM.localImage ? await CM.localImage(url, 600) : null;
+      if (d) return d;
+      U().toast('Il sito non permette di scaricare la foto trascinata: fai clic destro sulla foto \u203a \u201cCopia immagine\u201d e poi Ctrl+V qui');
+    }
+    return null;
+  };
+  SH.photoField = function (current, onSet) {
+    const box = el('div', { class: 'photo-drop', tabindex: '0', title: 'Trascina qui una foto oppure incollala con Ctrl+V' });
+    const set = async (p) => { const d = await p; if (d) { onSet(d); U().toast('Foto del mobile salvata'); } };
+    const pick = () => { const i = el('input', { type: 'file', accept: 'image/*' }); i.addEventListener('change', () => { if (i.files[0]) set(CM.inspire.shrink(i.files[0], 600)); }); i.click(); };
+    box.append(
+      current ? el('img', { src: current, alt: 'Foto del mobile' }) : el('div', { class: 'photo-ph', html: U().icon('camera', 28) }),
+      el('div', { class: 'photo-txt' }, [
+        el('b', { text: current ? 'Cambia la foto' : 'Aggiungi la foto del mobile' }),
+        el('span', { class: 'muted small', text: 'Trascinala qui, oppure sul sito del negozio fai clic destro sulla foto \u203a \u201cCopia immagine\u201d e premi Ctrl+V.' }),
+        el('div', { class: 'actions' }, [
+          el('button', { class: 'btn small', text: 'Scegli un file\u2026', onclick: (e) => { e.stopPropagation(); pick(); } }),
+          navigator.clipboard && navigator.clipboard.read ? el('button', { class: 'btn small', text: 'Incolla', onclick: async (e) => {
+            e.stopPropagation();
+            try { for (const it of await navigator.clipboard.read()) { const t = it.types.find(x => /^image\//.test(x)); if (t) return set(CM.inspire.shrink(await it.getType(t), 600)); } U().toast('Negli appunti non c\u2019\u00e8 un\u2019immagine'); }
+            catch (er) { U().toast('Premi Ctrl+V per incollare la foto'); }
+          } }) : null,
+          current ? el('button', { class: 'btn small danger', text: 'Togli la foto', onclick: (e) => { e.stopPropagation(); onSet(''); } }) : null
+        ])
+      ])
+    );
+    box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('over'); });
+    box.addEventListener('dragleave', () => box.classList.remove('over'));
+    box.addEventListener('drop', e => { e.preventDefault(); box.classList.remove('over'); set(CM.imageFromData(e.dataTransfer)); });
+    box.addEventListener('paste', e => { e.preventDefault(); e.stopPropagation(); set(CM.imageFromData(e.clipboardData)); });
+    return box;
+  };
+
   /* ---------- Mobile ---------- */
   SH.furniture = function (sheet, ctx, id) {
     const plan = ctx.editor.plan;
@@ -55,6 +102,10 @@
     fields.appendChild(moneyField('Prezzo', f.price, v => mut(pl => { pl.furniture[id].price = v; })));
     fields.appendChild(U().textField('Negozio', f.store || '', v => mut(pl => { pl.furniture[id].store = v; }), { full: false }));
     sheet.appendChild(fields);
+    if (CM.isPC()) {
+      sheet.appendChild(el('div', { class: 'sec-title', text: 'Foto del mobile' }));
+      sheet.appendChild(SH.photoField(f.img, d => mut(pl => { if (pl.furniture[id]) pl.furniture[id].img = d; })));
+    }
     if (f.shape === 'composite') {
       sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn primary', html: U().icon('arredo', 18) + 'Modifica la composizione', onclick: () => CM.config.open(f, nf => mut(pl => { const t = pl.furniture[id]; if (!t) return; ['modules', 'front', 'handle', 'metal', 'worktop', 'body', 'mount', 'components', 'w', 'd', 'h', 'price', 'color', 'name'].forEach(k => { if (nf[k] !== undefined) t[k] = CM.clone(nf[k]); }); })) })]));
       if (f.components && f.components.length) sheet.appendChild(el('div', { class: 'card' }, f.components.map(c => el('div', { class: 'line' }, [el('span', { class: 'l-main', text: c.qty + ' \u00d7 ' + c.name }), el('span', { class: 'l-num', text: c.price ? CM.fmt.eur(c.price * c.qty) : '' })]))));

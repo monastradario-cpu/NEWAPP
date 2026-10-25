@@ -1387,7 +1387,7 @@
     if (ctrl && low === 'z') { e.preventDefault(); e.shiftKey ? editor.redo() : editor.undo(); return; }
     if (ctrl && low === 'y') { e.preventDefault(); editor.redo(); return; }
     if (ctrl && low === 'c') { e.preventDefault(); copySel(); return; }
-    if (ctrl && low === 'v') { e.preventDefault(); pasteAt(mouseWorld); return; }
+    if (ctrl && low === 'v') return; // gestito dall'evento "incolla": foto o elementi copiati
     if (ctrl && low === 'd') { e.preventDefault(); duplicateSel(); return; }
     if (ctrl || e.altKey) return;
     if (key === 'Delete' || key === 'Backspace') { if (editor.sel.type) { e.preventDefault(); editor.deleteSelection(); } return; }
@@ -1743,6 +1743,22 @@
     window.addEventListener('resize', () => { editor.resize(); if (project && tab === 'pianta') renderSheet(); });
 
     document.addEventListener('keydown', onKey);
+    // Incolla: un'immagine negli appunti diventa la foto del mobile selezionato (al computer); altrimenti incolla gli elementi copiati
+    document.addEventListener('paste', async (e) => {
+      if (U.overlayOpen() || /INPUT|TEXTAREA/.test(document.activeElement.tagName) || $('editor').classList.contains('hidden')) return;
+      if (tab !== 'pianta' && !is3dEdit()) return;
+      const dt = e.clipboardData;
+      const hasImg = dt && [...(dt.items || [])].some(it => it.kind === 'file' && /^image\//.test(it.type));
+      e.preventDefault();
+      if (hasImg && CM.isPC()) {
+        const sel = editor.sel;
+        if (sel.type !== 'furniture') { U.toast('Seleziona prima il mobile a cui dare questa foto'); return; }
+        const d = await CM.imageFromData(dt);
+        if (d) { editor.mutate(pl => { if (pl.furniture[sel.id]) pl.furniture[sel.id].img = d; }, 'photo'); U.toast('Foto del mobile salvata'); }
+        return;
+      }
+      pasteAt(mouseWorld);
+    });
     $('planCanvas').addEventListener('contextmenu', onPlanContext);
     $('planCanvas').addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { const r = $('planCanvas').getBoundingClientRect(); mouseWorld = editor.toWorld(e.clientX - r.left, e.clientY - r.top); } });
     window.addEventListener('resize', () => { if (project) applySplit(); });

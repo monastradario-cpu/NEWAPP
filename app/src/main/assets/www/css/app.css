@@ -541,3 +541,11 @@ body.panel-min .sheet, body.panel-min .v3d-panel { max-height: 86px; overflow: h
 /* Pianta e 3D affiancati (schermi larghi) */
 #editor.split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "top top" "tools tools" "stage v3d" "summary summary" "tabs tabs"; }
 #editor.split .view3d-wrap { grid-area: v3d; border-left: 1px solid var(--line); }
+
+/* Foto del mobile (solo PC) */
+.photo-drop { display: flex; gap: 12px; align-items: center; border: 2px dashed var(--line-2); border-radius: 12px; padding: 10px; margin: 6px 0; background: var(--sheet); outline: none; }
+.photo-drop.over, .photo-drop:focus { border-color: var(--accent); background: #EEF2FD; }
+.photo-drop > img { width: 110px; height: 110px; object-fit: contain; background: #fff; border-radius: 8px; flex-shrink: 0; }
+.photo-drop .photo-ph { width: 110px; height: 110px; display: flex; align-items: center; justify-content: center; color: var(--muted); background: #fff; border-radius: 8px; flex-shrink: 0; }
+.photo-drop .photo-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.photo-drop .actions { margin-top: 4px; }

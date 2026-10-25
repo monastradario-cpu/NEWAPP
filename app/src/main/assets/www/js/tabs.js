@@ -177,6 +177,12 @@
       U().textField('Negozio', v.store || '', x => { v.store = x; }, { full: false }),
       U().textField('Link al prodotto', v.url || '', x => { v.url = x; })
     ];
+    if (CM.isPC && CM.isPC()) {
+      const holder = el('div', { class: 'field full' });
+      const draw = () => { holder.innerHTML = ''; holder.append(el('label', { text: 'Foto del mobile' }), CM.sheets.photoField(v.img, d => { v.img = d; draw(); })); };
+      draw();
+      fields.push(holder);
+    }
     const extra = !isNew && !base ? [{ label: 'Elimina', value: 'delete', danger: true }] : [];
     const r = await formDialog(isNew ? 'Nuovo mobile' : base ? 'Personalizza ' + d.name : 'Modifica articolo', fields, extra);
     if (r === 'delete') { CM.lib.removeItem(d.id); U().toast('Articolo eliminato'); return null; }
