@@ -453,6 +453,7 @@
   }
 
   function renderSheet() {
+    if (editor.sel.type !== 'wall') editor.scopeWalls = null;
     const in3d = is3dEdit();
     const sheet = in3d ? $('v3dPanel') : $('sheet');
     if (in3d) { $('sheet').classList.add('hidden'); $('stage').classList.remove('with-sheet'); }
@@ -492,6 +493,7 @@
       const st = P.roomStats(plan, room);
       const rect = P.rectInfo(plan, room);
       sheet.appendChild(sheetHead('Stanza', room.name));
+      sheet.appendChild(el('p', { class: 'muted small', style: 'margin:0 0 4px', text: 'Per spostarla trascinala: si muove solo lei, con i suoi mobili; le stanze vicine restano dove sono.' }));
       // tipo con un tocco
       const quick = ['soggiorno', 'cucina', 'camera', 'cameretta', 'bagno', 'corridoio', 'ingresso', 'studio', 'ripostiglio', 'lavanderia', 'balcone', 'altro'];
       sheet.appendChild(el('div', { class: 'chips-row wrap type-chips' }, quick.map(k => el('button', {
@@ -543,14 +545,22 @@
       const L = P.wallLen(plan, w);
       sheet.appendChild(sheetHead('Muro', CM.fmt.m(L)));
       const line = P.wallLine(plan, sel.id);
-      const whole = line.length > 1 && editor.wallScope === 'all';
-      const targets = whole ? line : [sel.id];
+      // quale muro: solo il tratto, il muro di una delle stanze (anche se in comune), tutta la parete
+      const owners = P.wallOwners(plan, sel.id);
+      const scopes = [{ value: 'one', label: 'Solo questo tratto' }];
+      owners.forEach(rid => { const run = P.roomRun(plan, sel.id, rid); if (owners.length > 1 || run.length > 1) scopes.push({ value: 'room:' + rid, label: 'Muro di ' + plan.rooms[rid].name + ' (' + CM.fmt.m(run.reduce((a, id) => a + P.wallLen(plan, id), 0)) + ')' }); });
+      if (line.length > 1) scopes.push({ value: 'all', label: 'Tutta la parete (' + line.length + ' tratti)' });
+      const scope = scopes.some(x => x.value === editor.wallScope) ? editor.wallScope : 'one';
+      const whole = scope === 'all';
+      const targets = whole ? line : scope.startsWith('room:') ? P.roomRun(plan, sel.id, scope.slice(5)) : [sel.id];
+      editor.scopeWalls = targets.length > 1 || scope !== 'one' ? targets : null;
       const A = plan.nodes[w.a], B = plan.nodes[w.b];
       const horiz = Math.abs(B.x - A.x) >= Math.abs(B.y - A.y);
       const sideLabel = (end) => { const p = end === 'a' ? A : B, q = end === 'a' ? B : A; return horiz ? (p.x < q.x ? 'Sinistra' : 'Destra') : (p.y < q.y ? 'Sopra' : 'Sotto'); };
       const side = editor.stretchSide || 'b';
       const fields = el('div', { class: 'fields' });
-      if (line.length > 1) fields.appendChild(U.segField('Modifica', [{ value: 'one', label: 'Solo questo tratto' }, { value: 'all', label: 'Tutta la parete (' + line.length + ' tratti)' }], whole ? 'all' : 'one', v => { editor.wallScope = v; renderSheet(); }));
+      if (owners.length > 1) sheet.appendChild(el('div', { class: 'warn-box', html: 'Muro in comune tra <b>' + owners.map(r => plan.rooms[r].name).join('</b> e <b>') + '</b>: scegli qui sotto se lavorare sul muro di una sola stanza.' }));
+      if (scopes.length > 1) fields.appendChild(U.segField('Modifica', scopes, scope, v => { editor.wallScope = v; renderSheet(); editor.draw(); }));
       fields.appendChild(U.numField('Lunghezza di questo tratto', L, 'm', v => mut(pl => P.stretchWall(pl, sel.id, v, editor.stretchSide || 'b')), { min: 0.1, max: 100 }));
       fields.appendChild(U.segField('Allunga o accorcia verso', [{ value: 'a', label: sideLabel('a') }, { value: 'b', label: sideLabel('b') }], side, v => { editor.stretchSide = v; }));
       const angDeg = ((Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI) + 360) % 360;
@@ -592,7 +602,7 @@
       ]));
       sheet.appendChild(el('div', { class: 'actions' }, [
         el('button', { class: 'btn', text: 'Foto delle tracce', onclick: () => CM.tabs.addDiary({ type: 'tracce', wall: sel.id, room: P.roomOf(plan, { x: (plan.nodes[w.a].x + plan.nodes[w.b].x) / 2, y: (plan.nodes[w.a].y + plan.nodes[w.b].y) / 2 }) || '' }) }),
-        el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina muro', onclick: () => editor.deleteSelection() })
+        el('button', { class: 'btn danger', html: U.icon('trash', 18) + (scope.startsWith('room:') ? 'Elimina il muro di ' + plan.rooms[scope.slice(5)].name : whole ? 'Elimina tutta la parete' : 'Elimina muro'), onclick: () => deleteWallScope(scope, targets) })
       ]));
     } else if (sel.type === 'opening' && plan.openings[sel.id]) {
       const op = plan.openings[sel.id];
@@ -605,7 +615,17 @@
       fields.appendChild(U.numField('Larghezza', op.w, 'cm', v => mut(pl => { pl.openings[sel.id].w = v; }), { min: 0.2, max: 8 }));
       fields.appendChild(U.numField('Altezza', op.h, 'cm', v => mut(pl => { pl.openings[sel.id].h = v; }), { min: 0.2, max: 6 }));
       if (op.kind === 'finestra') fields.appendChild(U.numField('Davanzale da terra', op.sill || 0, 'cm', v => mut(pl => { pl.openings[sel.id].sill = v; }), { min: 0, max: 3 }));
-      fields.appendChild(U.numField('Distanza dall’angolo', Math.max(0, op.pos - op.w / 2), 'cm', v => mut(pl => { const o = pl.openings[sel.id]; o.pos = v + o.w / 2; }), { min: 0, max: 100 }));
+      // distanze dagli angoli, sul muro finito (come le misuri col metro dentro la stanza)
+      const cls = P.openingClearances(plan, sel.id), cl = cls.find(c => c.room) || cls[0];
+      if (cl) {
+        const ow = plan.walls[op.wall], wa = plan.nodes[ow.a], wb = plan.nodes[ow.b];
+        const hz = Math.abs(wb.x - wa.x) >= Math.abs(wb.y - wa.y);
+        const lLo = hz ? (wa.x < wb.x ? 'a sinistra' : 'a destra') : (wa.y < wb.y ? 'in alto' : 'in basso');
+        const lHi = hz ? (wa.x < wb.x ? 'a destra' : 'a sinistra') : (wa.y < wb.y ? 'in basso' : 'in alto');
+        const where = cl.room && plan.rooms[cl.room] ? ' (' + plan.rooms[cl.room].name + ')' : ' (esterno)';
+        fields.appendChild(U.numField('Dall’angolo ' + lLo + where, cl.left, 'cm', v => mut(pl => { const o = pl.openings[sel.id]; o.pos = CM.r3(cl.lo + v + o.w / 2); P.clampOpening(pl, sel.id); }), { min: 0, max: 100 }));
+        fields.appendChild(U.numField('Dall’angolo ' + lHi + where, cl.right, 'cm', v => mut(pl => { const o = pl.openings[sel.id]; o.pos = CM.r3(cl.hi - v - o.w / 2); P.clampOpening(pl, sel.id); }), { min: 0, max: 100 }));
+      } else fields.appendChild(U.numField('Distanza dall’angolo', Math.max(0, op.pos - op.w / 2), 'cm', v => mut(pl => { const o = pl.openings[sel.id]; o.pos = v + o.w / 2; }), { min: 0, max: 100 }));
       CM.sheets.openingState(fields, ctx, sel.id);
       sheet.appendChild(fields);
       if (op.kind !== 'arco') sheet.appendChild(CM.trim.openingControls(plan, sel.id, (fn) => mut(fn, 'style')));
@@ -1277,6 +1297,30 @@
     } else return null;
     return set;
   }
+  // Elimina il tratto, la parete intera o il muro di una sola stanza (il tratto in comune resta all'altra stanza)
+  function deleteWallScope(scope, targets) {
+    if (scope === 'one') { editor.deleteSelection(); U.toast('Muro eliminato \u00b7 puoi annullare'); return; }
+    if (scope === 'all') { editor.mutate(pl => targets.forEach(id => { if (pl.walls[id]) P.deleteWall(pl, id); }), 'delete'); editor.select({}); U.toast('Parete eliminata \u00b7 puoi annullare'); return; }
+    const rid = scope.slice(5), name = editor.plan.rooms[rid].name;
+    let removed = 0, kept = [];
+    editor.mutate(pl => {
+      for (const id of targets) {
+        const w = pl.walls[id]; if (!w) continue;
+        const others = P.wallOwners(pl, id).filter(r => r !== rid);
+        if (!others.length) { P.deleteWall(pl, id); removed++; continue; }
+        // tratto in comune: resta, con le misure e lo stato che aveva per l'altra stanza
+        const keep = w.byRoom && w.byRoom[others[0]];
+        if (keep) { w.t = keep.t; w.h = keep.h; w.state = keep.state; }
+        if (w.byRoom) { const by = Object.assign({}, w.byRoom); delete by[rid]; w.byRoom = by; }
+        kept.push(pl.rooms[others[0]].name);
+      }
+    }, 'delete');
+    editor.select({});
+    if (removed && kept.length) U.toast('Tolto il muro di ' + name + ': il tratto in comune resta a ' + kept[0]);
+    else if (kept.length) U.toast('Il muro di ' + name + ' era tutto in comune con ' + kept[0] + ': resta quello di ' + kept[0] + ' (con il suo spessore)');
+    else U.toast('Muro di ' + name + ' eliminato \u00b7 puoi annullare');
+  }
+
   /* ---------- Menu rotondo intorno all'oggetto selezionato (pianta) ---------- */
   let radialKey = '', radialRaf = 0;
   function radialItems(sel) {
@@ -1287,7 +1331,7 @@
       { icon: 'brush', t: 'Colore e finiture', run: props },
       { icon: 'rotate', t: 'Ruota di 90\u00b0', run: () => editor.rotateSelected(90) },
       { icon: 'spark', t: 'Abbina il resto con l\u2019AI', ai: true, run: () => CM.inspire && CM.inspire.matchFromItem(persCtx(), sel.id) },
-      { icon: 'copy', t: 'Duplica', run: duplicateSel },
+      { icon: 'copy', t: 'Duplica o sposta', run: async () => { const c = await U.menu('Duplica o sposta', [{ id: 'dup', label: 'Duplica qui accanto', icon: 'copy' }, { id: 'dupr', label: 'Duplica in un\u2019altra stanza\u2026', icon: 'room' }, { id: 'mv', label: 'Sposta in un\u2019altra stanza\u2026', icon: 'room' }]); if (c === 'dup') duplicateSel(); else if (c === 'dupr') toOtherRoom(true); else if (c === 'mv') toOtherRoom(false); } },
       { icon: 'trash', t: 'Elimina', danger: true, run: () => { editor.deleteSelection(); U.toast('Eliminato \u00b7 puoi annullare'); } }
     ];
     if (sel.type === 'room') return [
@@ -1463,6 +1507,36 @@
     selectPasted(out);
     U.toast(sel.type === 'room' ? 'Stanza duplicata a destra della casa: trascinala dove vuoi' : 'Duplicato');
   }
+  // Duplica o sposta un mobile/impianto in un'altra stanza (stessa rotazione; se era contro un muro, si appoggia a un muro anche lì)
+  async function toOtherRoom(copy) {
+    const sel = editor.sel, plan = editor.plan;
+    const coll = sel.type === 'furniture' ? 'furniture' : sel.type === 'fixture' ? 'fixtures' : null;
+    const obj = coll && plan[coll][sel.id];
+    if (!obj) { U.toast('Seleziona un mobile o un impianto'); return; }
+    const here = P.roomOf(plan, obj);
+    const rooms = Object.keys(plan.rooms).filter(r => r !== here);
+    if (!rooms.length) { U.toast('Non ci sono altre stanze'); return; }
+    const rid = await U.menu((copy ? 'Duplica ' : 'Sposta ') + (obj.name ? '\u201c' + obj.name + '\u201d ' : '') + 'in\u2026', rooms.map(r => ({ id: r, label: plan.rooms[r].name, icon: 'room' })));
+    if (!rid) return;
+    const c = CM.geom.labelPoint(P.roomPts(plan, plan.rooms[rid]));
+    let nid = sel.id;
+    editor.mutate(pl => {
+      const src = pl[coll][sel.id];
+      let t = src;
+      if (copy) { nid = CM.uid(coll === 'furniture' ? 'f' : 'i'); t = pl[coll][nid] = CM.clone(src); }
+      if (coll === 'furniture') {
+        // era appoggiato a un muro?
+        const near = Object.keys(pl.walls).some(id => { const w = pl.walls[id]; return CM.geom.projSeg(src, pl.nodes[w.a], pl.nodes[w.b]).d < (w.t / 2 + src.d / 2 + 0.12); });
+        const pos = editor.at3d(() => editor._furnitureSnap(Object.assign({}, t, { x: c.x, y: c.y }), near));
+        t.x = CM.r3(pos.x); t.y = CM.r3(pos.y); if (near && pos.rot != null) t.rot = pos.rot;
+        if (!CM.geom.inPoly(t, P.roomPts(pl, pl.rooms[rid]))) { t.x = CM.r3(c.x); t.y = CM.r3(c.y); }
+      } else { const pos = editor.at3d(() => editor._fixtureSnap(c)); t.x = CM.r3(pos.x); t.y = CM.r3(pos.y); }
+    }, copy ? 'duplicate' : 'move');
+    editor.select({ type: sel.type, id: nid });
+    if (tab === 'pianta') { const b = editor.boundsOf({ type: sel.type, id: nid }); if (b) editor.reveal({ type: sel.type, id: nid }, { x: 0, y: 0, w: $('stage').clientWidth - 72, h: $('stage').clientHeight * 0.5 }); }
+    U.toast((copy ? 'Duplicato in ' : 'Spostato in ') + plan.rooms[rid].name + ': trascinalo dove vuoi');
+  }
+
   function nudgeSel(dx, dy) {
     const sel = editor.sel;
     if (!sel.type) return false;
@@ -1503,6 +1577,10 @@
         items.push({ label: 'Ruota di 15°', key: 'Maiusc+R', run: () => { pick(); editor.rotateSelected(15); } });
       }
       items.push({ label: 'Duplica', key: 'Ctrl+D', icon: 'copy', run: () => { pick(); duplicateSel(); } });
+      if (sel.type === 'furniture' || sel.type === 'fixture') {
+        items.push({ label: 'Duplica in un\u2019altra stanza\u2026', icon: 'room', run: () => { pick(); toOtherRoom(true); } });
+        items.push({ label: 'Sposta in un\u2019altra stanza\u2026', icon: 'room', run: () => { pick(); toOtherRoom(false); } });
+      }
       if (sel.type !== 'opening') items.push({ label: 'Copia', key: 'Ctrl+C', run: () => { pick(); copySel(); } });
       if (sel.type === 'room') items.push({ label: 'Stile della stanza', icon: 'spark', run: () => CM.personal.styleGallery(persCtx(sel.id)) });
       items.push('-');
@@ -1614,6 +1692,7 @@
       { id: 'l-plan', label: 'Mostra planimetria', icon: 'image', toggle: L.planimetria !== false },
       { id: 'l-foto', label: 'Mostra foto e tracce', icon: 'camera', toggle: L.foto !== false },
       { id: 'dims', label: 'Quote dei muri', icon: 'ruler', toggle: !!s.showDims },
+      { id: 'autojoin', label: 'Aggancia i muri da soli quando sposti un angolo', icon: 'wall', toggle: !!s.autoJoin },
       { id: 'grid', label: 'Griglia', icon: 'grid', toggle: s.showGrid !== false },
       { id: 'thick', label: 'Spessore dei nuovi muri', icon: 'thick', right: Math.round(s.wallT * 100) + ' cm' },
       { id: 'height', label: 'Altezza dei soffitti', icon: 'height', right: Math.round(s.wallH * 100) + ' cm' },
@@ -1644,6 +1723,7 @@
       case 'insert': return insertRooms();
       case 'insertplan': return CM.roomAI.importPlan();
       case 'trim': return CM.trim.houseDialog((fn) => editor.mutate(fn, 'style'), () => editor.plan);
+      case 'autojoin': s.autoJoin = !s.autoJoin; scheduleSave(); return U.toast(s.autoJoin ? 'Spostando un angolo vicino a un altro muro, si aggancia da solo' : 'I muri non si agganciano più da soli');
       case 'pdf': return CM.share.pdf(project);
       case 'img': return CM.share.file('pianta-' + project.name.replace(/\W+/g, '-') + '.png', 'image/png', CM.share.planImage(project), true);
       case 'file': return CM.share.exportProject(project);
@@ -1834,6 +1914,7 @@
     setVariant,
     focus: focusSel,
     straighten: (img) => straightenDialog(img),
+    toOtherRoom: (copy) => toOtherRoom(copy),
     selectSet: (set) => { setTab('pianta'); editor.setTool('multi'); editor.setMulti(set); buildTools(); renderSheet(); },
     placeItem: (it) => { setTab('pianta'); sheetMode = null; editor.setPendingItem(it); buildTools(); renderSheet(); },
     snapshot3d: (needOpen) => {

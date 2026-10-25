@@ -336,6 +336,40 @@
           } else dimLabel(ctx, v, A, B, off, CM.fmt.num(G.dist(A, B), 2), isSel ? C.accent : C.muted, isSel, boxes);
         }
       }
+      // Muri compresi nella scelta (muro di una stanza, parete intera)
+      if (opts.scopeWalls) {
+        ctx.save(); ctx.strokeStyle = 'rgba(31,79,209,0.35)'; ctx.lineCap = 'butt';
+        for (const id of opts.scopeWalls) {
+          const w = plan.walls[id]; if (!w) continue;
+          const a = toS(v, plan.nodes[w.a]), b = toS(v, plan.nodes[w.b]);
+          ctx.lineWidth = Math.max(6, w.t * v.s + 6);
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+        ctx.restore();
+      }
+      // Porta o finestra selezionata: distanze dagli angoli (muro finito) e larghezza
+      if (sel.type === 'opening' && plan.openings[sel.id] && P.openingClearances) {
+        const o = plan.openings[sel.id];
+        const cl = P.openingClearances(plan, sel.id);
+        const inside = cl.filter(c => c.room);
+        for (const c of (inside.length ? inside : cl.slice(0, 1))) {
+          const at = (t) => ({ x: c.A.x + c.u.x * t + c.n.x * c.side * c.h, y: c.A.y + c.u.y * t + c.n.y * c.side * c.h });
+          const segs = [[c.lo, o.pos - o.w / 2, c.left], [o.pos - o.w / 2, o.pos + o.w / 2, o.w], [o.pos + o.w / 2, c.hi, c.right]];
+          const o1 = 14 + 10;
+          ctx.save(); ctx.strokeStyle = C.accent; ctx.lineWidth = 1.2;
+          for (const [t0, t1, val] of segs) {
+            if (val < 0.01) continue;
+            const a = toS(v, at(t0)), b = toS(v, at(t1)), l = Math.hypot(b.x - a.x, b.y - a.y);
+            if (l < 4) continue;
+            const nx = -(b.y - a.y) / l * c.side, ny = (b.x - a.x) / l * c.side;
+            ctx.beginPath(); ctx.moveTo(a.x + nx * o1, a.y + ny * o1); ctx.lineTo(b.x + nx * o1, b.y + ny * o1);
+            for (const p of [a, b]) { ctx.moveTo(p.x + nx * 3, p.y + ny * 3); ctx.lineTo(p.x + nx * (o1 + 5), p.y + ny * (o1 + 5)); }
+            ctx.stroke();
+          }
+          ctx.restore();
+          for (const [t0, t1, val] of segs) if (val >= 0.01) dimLabel(ctx, v, at(t0), at(t1), c.side * o1, CM.fmt.num(val, 2), C.accent, true, boxes);
+        }
+      }
       // Maniglie dei vertici
       for (const nid of (opts.highlightNodes || [])) {
         const n = plan.nodes[nid];

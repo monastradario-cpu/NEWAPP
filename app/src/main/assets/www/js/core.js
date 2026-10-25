@@ -414,7 +414,18 @@
     const xa = Math.min(x0, x1), xb = Math.max(x0, x1), ya = Math.min(y0, y1), yb = Math.max(y0, y1);
     const corners = [[xa, ya], [xb, ya], [xb, yb], [xa, yb]].map(c => P.getOrCreateNode(plan, c[0], c[1]));
     for (let i = 0; i < 4; i++) P.addWall(plan, corners[i], corners[(i + 1) % 4], props.wall);
-    return P.addRoom(plan, corners, props);
+    const rid = P.addRoom(plan, corners, props);
+    // ogni muro ricorda com'era per ciascuna stanza: se due stanze si toccano, il muro in comune
+    // resta uno solo, ma si può togliere quello di una stanza e tenere quello dell'altra
+    const wp = props.wall || {};
+    for (const wid of P.roomWalls(plan, plan.rooms[rid])) {
+      const w = plan.walls[wid];
+      const by = Object.assign({}, w.byRoom || {});
+      if (!w.byRoom) P.wallOwners(plan, wid).filter(r => r !== rid).forEach(o => { by[o] = { t: w.t, h: w.h, state: w.state }; });
+      by[rid] = { t: wp.t != null ? wp.t : w.t, h: wp.h != null ? wp.h : w.h, state: wp.state || w.state };
+      w.byRoom = by;
+    }
+    return rid;
   };
 
   P.addRoom = function (plan, nodeIds, props) {
@@ -594,6 +605,59 @@
     return out.sort((p, q) => t(p) - t(q));
   };
 
+  // Stanze che hanno questo tratto di muro sul loro bordo
+  P.wallOwners = function (plan, wid) {
+    return Object.keys(plan.rooms).filter(rid => P.roomWalls(plan, plan.rooms[rid]).includes(wid));
+  };
+  // Il muro "della stanza": i tratti allineati e contigui del bordo di quella stanza, attorno a questo tratto
+  P.roomRun = function (plan, wid, rid) {
+    const line = P.wallLine(plan, wid);
+    const rw = new Set(P.roomWalls(plan, plan.rooms[rid]));
+    let i = line.indexOf(wid);
+    if (i < 0 || !rw.has(wid)) return [wid];
+    let a = i, b = i;
+    while (a > 0 && rw.has(line[a - 1])) a--;
+    while (b < line.length - 1 && rw.has(line[b + 1])) b++;
+    return line.slice(a, b + 1);
+  };
+
+  // Distanze di porte e finestre dagli angoli (muro finito, misurate sulle facce del muro)
+  P.openingClearances = function (plan, oid) {
+    const o = plan.openings[oid];
+    const w = o && plan.walls[o.wall];
+    if (!w) return [];
+    const A = plan.nodes[w.a], B = plan.nodes[w.b], L = G.dist(A, B);
+    if (L < 1e-6) return [];
+    const u = { x: (B.x - A.x) / L, y: (B.y - A.y) / L }, n = { x: -u.y, y: u.x };
+    const line = P.wallLine(plan, o.wall);
+    const k0 = line.indexOf(o.wall);
+    const proj = (p) => (p.x - A.x) * u.x + (p.y - A.y) * u.y;
+    // faccia di un tratto sul lato s (riferito al muro della porta): [inizio, fine] lungo u, e i capi dell'asse
+    const faceOn = (id, s) => {
+      const ww = plan.walls[id];
+      const ends = [proj(plan.nodes[ww.a]), proj(plan.nodes[ww.b])].sort((x, y) => x - y);
+      for (const fc of P.wallFaces(plan, id)) {
+        const side = ((fc.a.x + fc.b.x) / 2 - A.x) * n.x + ((fc.a.y + fc.b.y) / 2 - A.y) * n.y;
+        if (side * s > 0) { const t = [proj(fc.a), proj(fc.b)].sort((x, y) => x - y); return { lo: t[0], hi: t[1], e0: ends[0], e1: ends[1] }; }
+      }
+      return null;
+    };
+    const out = [];
+    for (const s of [1, -1]) {
+      const f0 = faceOn(o.wall, s);
+      if (!f0) continue;
+      let lo = f0.lo, hi = f0.hi;
+      // la faccia prosegue sui tratti allineati finché non incontra un muro di traverso
+      for (let k = k0 + 1, f = f0; k < line.length && Math.abs(f.hi - f.e1) < 0.002; k++) { f = faceOn(line[k], s); if (!f) break; hi = f.hi; }
+      for (let k = k0 - 1, f = f0; k >= 0 && Math.abs(f.lo - f.e0) < 0.002; k--) { f = faceOn(line[k], s); if (!f) break; lo = f.lo; }
+      if (!isFinite(lo)) continue;
+      const h = (w.t || 0.1) / 2;
+      const mid = { x: A.x + u.x * o.pos + n.x * s * (h + 0.06), y: A.y + u.y * o.pos + n.y * s * (h + 0.06) };
+      out.push({ side: s, room: P.roomOf(plan, mid), lo, hi, left: Math.max(0, o.pos - o.w / 2 - lo), right: Math.max(0, hi - (o.pos + o.w / 2)), A, u, n, h });
+    }
+    return out;
+  };
+
   P.moveNodes = function (plan, ids, dx, dy) {
     for (const id of ids) { const n = plan.nodes[id]; if (n) { n.x = r3(n.x + dx); n.y = r3(n.y + dy); } }
   };
@@ -641,6 +705,34 @@
     if (op.w > L - 0.02) op.w = r3(Math.max(0.2, L - 0.02));
     const half = op.w / 2;
     op.pos = r3(Math.min(Math.max(op.pos, half + 0.01), L - half - 0.01));
+  };
+
+  // Stacca una stanza dalle vicine per spostarla da sola: i vertici e i muri in comune vengono sdoppiati
+  // (la stanza vicina tiene il suo muro, quella spostata ne riceve una copia con le sue misure)
+  P.detachRoom = function (plan, rid) {
+    const room = plan.rooms[rid];
+    if (!room) return [];
+    const own = P.roomWalls(plan, room);
+    const others = Object.keys(plan.rooms).filter(r => r !== rid);
+    const sharedW = new Set();
+    for (const r of others) for (const w of P.roomWalls(plan, plan.rooms[r])) if (own.includes(w)) sharedW.add(w);
+    const ownSet = new Set(own);
+    const usedElsewhere = (nid) => others.some(r => plan.rooms[r].nodes.includes(nid)) || Object.keys(plan.walls).some(wid => !ownSet.has(wid) && (plan.walls[wid].a === nid || plan.walls[wid].b === nid)) || own.some(wid => sharedW.has(wid) && (plan.walls[wid].a === nid || plan.walls[wid].b === nid));
+    const map = {};
+    room.nodes = room.nodes.map(nid => { if (!usedElsewhere(nid)) return nid; const n = plan.nodes[nid]; map[nid] = P.addNode(plan, n.x, n.y); return map[nid]; });
+    const m = (id) => map[id] || id;
+    for (const wid of own) {
+      const w = plan.walls[wid];
+      if (sharedW.has(wid)) {
+        const copy = CM.clone(w); copy.a = m(w.a); copy.b = m(w.b);
+        const mine = w.byRoom && w.byRoom[rid];
+        if (mine) Object.assign(copy, mine);
+        copy.byRoom = mine ? { [rid]: mine } : undefined;
+        plan.walls[CM.uid('w')] = copy;
+        if (w.byRoom) { const by = Object.assign({}, w.byRoom); delete by[rid]; w.byRoom = by; }
+      } else { w.a = m(w.a); w.b = m(w.b); }
+    }
+    return room.nodes.slice();
   };
 
   P.deleteWall = function (plan, wid) {

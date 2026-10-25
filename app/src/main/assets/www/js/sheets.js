@@ -141,6 +141,8 @@
         ctx.editor.select({ type: 'furniture', id: nid });
       } })
     ];
+    acts.push(el('button', { class: 'btn', html: U().icon('room', 18) + 'Duplica in un\u2019altra stanza', onclick: () => CM.app.toOtherRoom(true) }));
+    acts.push(el('button', { class: 'btn', text: 'Sposta in un\u2019altra stanza', onclick: () => CM.app.toOtherRoom(false) }));
     if (f.url) acts.push(el('a', { class: 'btn', href: f.url, target: '_blank', rel: 'noopener', text: 'Apri nel negozio' }));
     acts.push(el('button', { class: 'btn', text: 'Salva nel catalogo', onclick: () => {
       const it = { id: CM.uid('c'), name: f.name, cat: f.cat, w: f.w, d: f.d, h: f.h, elev: f.elev || 0, shape: f.shape, color: f.color, price: f.price, store: f.store, url: f.url, img: f.img, light: f.light };

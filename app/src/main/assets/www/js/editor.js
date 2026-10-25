@@ -104,7 +104,7 @@
       R.draw(this.ctx, {
         plan: this.plan, view: this.view, width: this.W, height: this.H,
         sel: this.sel, showGrid: s.showGrid !== false, showDims: !!s.showDims,
-        draft: this.draft, highlightNodes: this._handleNodes(),
+        draft: this.draft, highlightNodes: this._handleNodes(), scopeWalls: this.sel.type === 'wall' ? this.scopeWalls : null,
         layers: s.layers, furnitureWarnings: this.warnings, redraw: () => this.draw(), pins: this.pins()
       });
       if (this.hooks.onDraw) this.hooks.onDraw(this.view);
@@ -290,8 +290,9 @@
       const v = this.view;
       const out = { p: { x: world.x, y: world.y }, node: null, wall: null, guides: [] };
       // 1. vertici esistenti
-      let best = null, bestD = NODE_SNAP / v.s;
+      let best = null, bestD = opts.free ? 0 : NODE_SNAP / v.s;
       for (const id in this.plan.nodes) {
+        if (opts.free) break;
         if (opts.exclude && opts.exclude.includes(id)) continue;
         const n = this.plan.nodes[id];
         const d = Math.hypot(n.x - world.x, n.y - world.y);
@@ -441,6 +442,7 @@
 
     _down(e) {
       if (e.pointerType === 'mouse' && e.button === 2) return; // tasto destro: menu
+      this._ptype = e.pointerType;
       this.canvas.setPointerCapture(e.pointerId);
       const pos = this._pos(e);
       this.pointers.set(e.pointerId, pos);
@@ -624,7 +626,9 @@
     /* ---------- Trascinamenti (strumento selezione) ---------- */
     _startDrag(g) {
       const hit = g.hit;
-      const selected = hit && (hit.type === 'node' || (this.sel.type === hit.type && this.sel.id === hit.id));
+      let selected = hit && (hit.type === 'node' || (this.sel.type === hit.type && this.sel.id === hit.id));
+      // col mouse i mobili, le porte e gli impianti si trascinano subito (le stanze, grandi, dopo averle selezionate)
+      if (!selected && hit && this._ptype === 'mouse' && ['furniture', 'opening', 'fixture', 'column'].includes(hit.type)) { this.select({ type: hit.type, id: hit.id }); selected = true; }
       if (!selected) { g.type = 'pan'; return; }
       g.type = 'drag';
       g.target = hit;
@@ -639,9 +643,11 @@
       const step = this.gridStep();
       this.draft = null;
       if (t.type === 'node') {
-        const sp = this.snapPoint(world, { exclude: [t.id], walls: true });
+        // l'aggancio automatico ad altri muri si attiva solo se richiesto (menu ⋮)
+        const join = !!(this.project.settings && this.project.settings.autoJoin);
+        const sp = this.snapPoint(world, join ? { exclude: [t.id], walls: true } : { exclude: [t.id], free: true });
         plan.nodes[t.id].x = CM.r3(sp.p.x); plan.nodes[t.id].y = CM.r3(sp.p.y);
-        g.mergeWith = sp.node; g.ontoWall = sp.wall;
+        g.mergeWith = join ? sp.node : null; g.ontoWall = join ? sp.wall : null;
         this.draft = { kind: 'none', snap: sp.node || sp.wall ? sp.p : null, guides: sp.guides };
       } else if (t.type === 'wall') {
         const w = orig.walls[t.id];
@@ -652,7 +658,18 @@
         for (const id of [w.a, w.b]) { plan.nodes[id].x = CM.r3(orig.nodes[id].x + n.x * k); plan.nodes[id].y = CM.r3(orig.nodes[id].y + n.y * k); }
       } else if (t.type === 'room') {
         const sx = G.snap(dx, step), sy = G.snap(dy, step);
-        for (const id of orig.rooms[t.id].nodes) { plan.nodes[id].x = CM.r3(orig.nodes[id].x + sx); plan.nodes[id].y = CM.r3(orig.nodes[id].y + sy); }
+        // al primo movimento la stanza si stacca dalle vicine: si sposta solo lei, con i suoi mobili
+        if (!g.detached) {
+          g.detached = true;
+          const pts = P.roomPts(plan, plan.rooms[t.id]);
+          g.items = [];
+          for (const k of ['furniture', 'fixtures', 'columns']) for (const id in plan[k]) { const o = plan[k][id]; if (G.inPoly(o, pts)) g.items.push([k, id, o.x, o.y]); }
+          for (const id in plan.openings) { /* restano sui loro muri */ }
+          const ids = P.detachRoom(plan, t.id);
+          g.roomNodes = ids.map(id => [id, plan.nodes[id].x, plan.nodes[id].y]);
+        }
+        for (const [id, x, y] of g.roomNodes) { plan.nodes[id].x = CM.r3(x + sx); plan.nodes[id].y = CM.r3(y + sy); }
+        for (const [k, id, x, y] of g.items) { const o = plan[k][id]; if (o) { o.x = CM.r3(x + sx); o.y = CM.r3(y + sy); } }
       } else if (t.type === 'opening') {
         const op = plan.openings[t.id];
         const w = plan.walls[op.wall];
