@@ -1690,6 +1690,17 @@
       const arrow = /^Arrow/.test(code), walkKey = view3d.mode === 'walk' && /^Key[WASDQE]$/.test(code) && !(in3 && v3dTool);
       const zoom = /^(Equal|Minus|NumpadAdd|NumpadSubtract)$/.test(code);
       const nudging = arrow && in3 && editor.sel.type;
+      // dal Modellino, le frecce portano subito dentro casa (Passeggiata)
+      if (!nudging && arrow && view3d.mode !== 'walk') {
+        e.preventDefault();
+        const cur = view3d.currentRoom && view3d.currentRoom();
+        const rid = cur || (view3d.rooms()[0] || {}).id;
+        if (rid) view3d.goRoom(rid); else view3d.setMode('walk');
+        $('joystick').classList.remove('hidden'); $('v3dTip').classList.add('hidden');
+        if (build3dUi.refresh) build3dUi.refresh(); roomNav();
+        U.toast('Sei dentro casa: frecce per camminare, Maiusc per correre, PagSu/PagGi\u00f9 per cambiare stanza');
+        return;
+      }
       if (!nudging && (arrow || walkKey || zoom)) { e.preventDefault(); if (!e.repeat) view3d.key(code, true, e.shiftKey); else view3d._run = e.shiftKey; return; }
       if (key === 'PageDown' || key === 'PageUp') { e.preventDefault(); view3d.stepRoom(key === 'PageDown' ? 1 : -1); return; }
     }
