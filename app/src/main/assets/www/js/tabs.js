@@ -95,6 +95,7 @@
     const project = app().project();
     const plan = CM.project.plan(project);
     box.innerHTML = '';
+    const pcPhotos = CM.isPC && CM.isPC() && CM.photoAI ? CM.photoAI.batchBox(() => T.renderArredo(box)) : null;
     box.appendChild(el('div', { class: 'tab-head' }, [
       el('h1', { text: 'Arredo e materiali' }),
       el('div', { class: 'actions', style: 'margin:0' }, [
@@ -113,6 +114,7 @@
         } })
       ])
     ]));
+    if (pcPhotos) box.appendChild(pcPhotos);
     // mobili nel progetto
     const placed = Object.keys(plan.furniture);
     if (placed.length) {
@@ -158,6 +160,7 @@
 
   const SHAPES = [['box', 'Generico'], ['sofa', 'Divano'], ['armchair', 'Poltrona'], ['bed', 'Letto'], ['table', 'Tavolo'], ['round_table', 'Tavolo rotondo'], ['chair', 'Sedia'], ['wardrobe', 'Armadio'], ['cabinet', 'Mobile basso'], ['kitchen_base', 'Base cucina'], ['kitchen_wall', 'Pensile'], ['kitchen_tall', 'Colonna'], ['sink', 'Lavello'], ['hob', 'Piano cottura'], ['fridge', 'Frigorifero'], ['washer', 'Lavatrice'], ['tv', 'TV'], ['shelf', 'Libreria'], ['desk', 'Scrivania'], ['wc', 'WC'], ['basin', 'Lavabo'], ['shower', 'Doccia'], ['bath', 'Vasca'], ['rug', 'Tappeto'], ['plant', 'Pianta'], ['lamp_floor', 'Lampada da terra'], ['lamp_ceiling', 'Lampadario'], ['curtain', 'Tenda'], ['mirror', 'Specchio'], ['picture', 'Quadro'], ['tree', 'Albero'], ['umbrella', 'Ombrellone'], ['pergola', 'Pergola'], ['car', 'Auto'], ['lounger', 'Sdraio']];
 
+  T.SHAPES = SHAPES;
   T.editItem = async function (it) {
     const isNew = !it;
     const base = it && it.base;

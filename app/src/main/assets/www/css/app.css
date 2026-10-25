@@ -549,3 +549,9 @@ body.panel-min .sheet, body.panel-min .v3d-panel { max-height: 86px; overflow: h
 .photo-drop .photo-ph { width: 110px; height: 110px; display: flex; align-items: center; justify-content: center; color: var(--muted); background: #fff; border-radius: 8px; flex-shrink: 0; }
 .photo-drop .photo-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .photo-drop .actions { margin-top: 4px; }
+.batch-drop { margin: 0 0 4px; }
+.batch-bar { height: 6px; border-radius: 6px; background: var(--sheet); overflow: hidden; margin: 8px 0; }
+.batch-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.batch-list { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.batch-row { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.batch-row img { width: 44px; height: 44px; object-fit: contain; background: #fff; border-radius: 6px; border: 1px solid var(--line); }

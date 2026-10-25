@@ -58,7 +58,7 @@
     }
     return null;
   };
-  SH.photoField = function (current, onSet) {
+  SH.photoField = function (current, onSet, onRecognize) {
     const box = el('div', { class: 'photo-drop', tabindex: '0', title: 'Trascina qui una foto oppure incollala con Ctrl+V' });
     const set = async (p) => { const d = await p; if (d) { onSet(d); U().toast('Foto del mobile salvata'); } };
     const pick = () => { const i = el('input', { type: 'file', accept: 'image/*' }); i.addEventListener('change', () => { if (i.files[0]) set(CM.inspire.shrink(i.files[0], 600)); }); i.click(); };
@@ -74,6 +74,7 @@
             try { for (const it of await navigator.clipboard.read()) { const t = it.types.find(x => /^image\//.test(x)); if (t) return set(CM.inspire.shrink(await it.getType(t), 600)); } U().toast('Negli appunti non c\u2019\u00e8 un\u2019immagine'); }
             catch (er) { U().toast('Premi Ctrl+V per incollare la foto'); }
           } }) : null,
+          current && onRecognize ? el('button', { class: 'btn small primary', html: U().icon('spark', 16) + 'Riconosci con l\u2019AI', onclick: (e) => { e.stopPropagation(); onRecognize(current); } }) : null,
           current ? el('button', { class: 'btn small danger', text: 'Togli la foto', onclick: (e) => { e.stopPropagation(); onSet(''); } }) : null
         ])
       ])
@@ -104,7 +105,17 @@
     sheet.appendChild(fields);
     if (CM.isPC()) {
       sheet.appendChild(el('div', { class: 'sec-title', text: 'Foto del mobile' }));
-      sheet.appendChild(SH.photoField(f.img, d => mut(pl => { if (pl.furniture[id]) pl.furniture[id].img = d; })));
+      sheet.appendChild(SH.photoField(f.img, d => mut(pl => { if (pl.furniture[id]) pl.furniture[id].img = d; }), async (img) => {
+        const v = await CM.photoAI.recognize(img, { confirm: 'Applica al mobile' });
+        if (!v) return;
+        mut(pl => {
+          const t = pl.furniture[id]; if (!t) return;
+          ['name', 'cat', 'shape', 'w', 'd', 'h', 'price', 'store', 'color', 'light'].forEach(k => { if (v[k] != null && v[k] !== '') t[k] = v[k]; });
+          ['fabric', 'wood', 'metal'].forEach(k => { if (v[k]) t[k] = v[k]; else delete t[k]; });
+          if (v.elev != null) t.elev = v.elev;
+        });
+        U().toast('Mobile aggiornato: guardalo nel 3D');
+      }));
     }
     if (f.shape === 'composite') {
       sheet.appendChild(el('div', { class: 'actions' }, [el('button', { class: 'btn primary', html: U().icon('arredo', 18) + 'Modifica la composizione', onclick: () => CM.config.open(f, nf => mut(pl => { const t = pl.furniture[id]; if (!t) return; ['modules', 'front', 'handle', 'metal', 'worktop', 'body', 'mount', 'components', 'w', 'd', 'h', 'price', 'color', 'name'].forEach(k => { if (nf[k] !== undefined) t[k] = CM.clone(nf[k]); }); })) })]));
