@@ -669,7 +669,9 @@
       CM.sheets.openingState(fields, ctx, sel.id);
       sheet.appendChild(fields);
       if (op.kind !== 'arco') sheet.appendChild(CM.trim.openingControls(plan, sel.id, (fn) => mut(fn, 'style')));
-      const acts = [el('button', { class: 'btn', html: U.icon('flip', 18) + 'Inverti lato', onclick: () => mut(pl => { pl.openings[sel.id].flipSide = !pl.openings[sel.id].flipSide; }) })];
+      const acts = [el('button', { class: 'btn', html: U.icon('flip', 18) + 'Inverti lato', onclick: () => mut(pl => { pl.openings[sel.id].flipSide = !pl.openings[sel.id].flipSide; }) }),
+        el('button', { class: 'btn', html: U.icon('room', 18) + 'Duplica in un\u2019altra stanza', onclick: () => toOtherRoom(true) }),
+        el('button', { class: 'btn', text: 'Sposta in un\u2019altra stanza', onclick: () => toOtherRoom(false) })];
       if (op.kind === 'battente') acts.push(el('button', { class: 'btn', html: U.icon('hinge', 18) + 'Cerniera', onclick: () => mut(pl => { pl.openings[sel.id].flipHinge = !pl.openings[sel.id].flipHinge; }) }));
       acts.push(el('button', { class: 'btn danger', html: U.icon('trash', 18) + 'Elimina', onclick: () => editor.deleteSelection() }));
       sheet.appendChild(el('div', { class: 'actions' }, acts));
@@ -711,6 +713,8 @@
       editor.resize();
       if (key === lastRevealed) { sheet.scrollTop = scroll; return; }
       lastRevealed = key;
+      // mentre trascini non si sposta la vista (altrimenti sembra che si muova tutta la casa)
+      if (editor.gesture && ['drag', 'pending'].includes(editor.gesture.type)) return;
       if (sheetMode === 'underlay') return;
       const st = $('stage').getBoundingClientRect(), sh = sheet.getBoundingClientRect();
       const side = sh.left > st.left + 10;
@@ -1399,7 +1403,7 @@
         { icon: 'flip', t: 'Inverti lato', run: () => editor.mutate(pl => { pl.openings[sel.id].flipSide = !pl.openings[sel.id].flipSide; }, 'flip') },
         o && o.kind === 'battente' ? { icon: 'hinge', t: 'Cerniera dall\u2019altra parte', run: () => editor.mutate(pl => { pl.openings[sel.id].flipHinge = !pl.openings[sel.id].flipHinge; }, 'flip') } : null,
         { icon: 'brush', t: 'Modello e colore', run: props },
-        { icon: 'copy', t: 'Duplica', run: duplicateSel },
+        { icon: 'copy', t: 'Duplica o sposta', run: async () => { const c = await U.menu('Duplica o sposta', [{ id: 'dup', label: 'Duplica qui accanto', icon: 'copy' }, { id: 'dupr', label: 'Duplica in un\u2019altra stanza\u2026', icon: 'room' }, { id: 'mv', label: 'Sposta in un\u2019altra stanza\u2026', icon: 'room' }]); if (c === 'dup') duplicateSel(); else if (c === 'dupr') toOtherRoom(true); else if (c === 'mv') toOtherRoom(false); } },
         { icon: 'trash', t: 'Elimina', danger: true, run: () => editor.deleteSelection() }
       ].filter(Boolean);
     }
@@ -1601,9 +1605,10 @@
   // Duplica o sposta un mobile/impianto in un'altra stanza (stessa rotazione; se era contro un muro, si appoggia a un muro anche lì)
   async function toOtherRoom(copy) {
     const sel = editor.sel, plan = editor.plan;
+    if (sel.type === 'opening') return openingToOtherRoom(copy);
     const coll = sel.type === 'furniture' ? 'furniture' : sel.type === 'fixture' ? 'fixtures' : null;
     const obj = coll && plan[coll][sel.id];
-    if (!obj) { U.toast('Seleziona un mobile o un impianto'); return; }
+    if (!obj) { U.toast('Seleziona un mobile, un impianto, una porta o una finestra'); return; }
     const here = P.roomOf(plan, obj);
     const rooms = Object.keys(plan.rooms).filter(r => r !== here);
     if (!rooms.length) { U.toast('Non ci sono altre stanze'); return; }
@@ -1626,6 +1631,43 @@
     editor.select({ type: sel.type, id: nid });
     if (tab === 'pianta') { const b = editor.boundsOf({ type: sel.type, id: nid }); if (b) editor.reveal({ type: sel.type, id: nid }, { x: 0, y: 0, w: $('stage').clientWidth - 72, h: $('stage').clientHeight * 0.5 }); }
     U.toast((copy ? 'Duplicato in ' : 'Spostato in ') + plan.rooms[rid].name + ': trascinalo dove vuoi');
+  }
+
+  // Porte e finestre in un'altra stanza: sul muro più simile (stessa direzione), al centro e libero
+  async function openingToOtherRoom(copy) {
+    const sel = editor.sel, plan = editor.plan, o = plan.openings[sel.id];
+    if (!o) return;
+    const G = CM.geom, w0 = plan.walls[o.wall];
+    const A0 = plan.nodes[w0.a], B0 = plan.nodes[w0.b];
+    const here = P.wallOwners(plan, o.wall);
+    const rooms = Object.keys(plan.rooms).filter(r => !here.includes(r) || here.length > 1);
+    const label = CM.OPENINGS[o.kind].label.toLowerCase();
+    const rid = await U.menu((copy ? 'Duplica ' : 'Sposta ') + label + ' in\u2026', rooms.map(r => ({ id: r, label: plan.rooms[r].name, icon: 'room' })));
+    if (!rid) return;
+    const dir0 = Math.atan2(B0.y - A0.y, B0.x - A0.x);
+    const par = (id) => { const w = plan.walls[id], a = plan.nodes[w.a], b = plan.nodes[w.b]; return Math.abs(Math.sin(Math.atan2(b.y - a.y, b.x - a.x) - dir0)) < 0.2; };
+    const busy = (id, pos, wid) => Object.keys(plan.openings).some(k => k !== sel.id && plan.openings[k].wall === id && Math.abs(plan.openings[k].pos - pos) < (plan.openings[k].w + wid) / 2 + 0.1);
+    const cands = P.roomWalls(plan, plan.rooms[rid]).filter(id => id !== o.wall && P.wallLen(plan, id) >= o.w + 0.2)
+      .sort((p, q) => (par(q) ? 1 : 0) - (par(p) ? 1 : 0) || P.wallLen(plan, q) - P.wallLen(plan, p));
+    let target = null, pos = 0;
+    for (const id of cands) {
+      const L = P.wallLen(plan, id);
+      for (const t of [0.5, 0.3, 0.7, 0.2, 0.8]) { const p = Math.max(o.w / 2 + 0.1, Math.min(L - o.w / 2 - 0.1, L * t)); if (!busy(id, p, o.w)) { target = id; pos = p; break; } }
+      if (target) break;
+    }
+    if (!target) { U.toast('In ' + plan.rooms[rid].name + ' non c\u2019\u00e8 un muro libero abbastanza lungo'); return; }
+    let nid = sel.id;
+    editor.mutate(pl => {
+      let t = pl.openings[sel.id];
+      if (copy) { nid = CM.uid('o'); t = pl.openings[nid] = CM.clone(t); }
+      t.wall = target; t.pos = CM.r3(pos);
+      // apre verso l'interno della stanza scelta
+      const g = P.openingGeom(pl, t), c = G.labelPoint(P.roomPts(pl, pl.rooms[rid]));
+      t.flipSide = ((c.x - g.c.x) * g.n.x + (c.y - g.c.y) * g.n.y) < 0;
+      P.clampOpening(pl, nid);
+    }, copy ? 'duplicate' : 'move');
+    editor.select({ type: 'opening', id: nid });
+    U.toast((copy ? 'Duplicata in ' : 'Spostata in ') + plan.rooms[rid].name + ': trascinala lungo il muro o scrivi le distanze');
   }
 
   function nudgeSel(dx, dy) {
@@ -1668,7 +1710,7 @@
         items.push({ label: 'Ruota di 15°', key: 'Maiusc+R', run: () => { pick(); editor.rotateSelected(15); } });
       }
       items.push({ label: 'Duplica', key: 'Ctrl+D', icon: 'copy', run: () => { pick(); duplicateSel(); } });
-      if (sel.type === 'furniture' || sel.type === 'fixture') {
+      if (sel.type === 'furniture' || sel.type === 'fixture' || sel.type === 'opening') {
         items.push({ label: 'Duplica in un\u2019altra stanza\u2026', icon: 'room', run: () => { pick(); toOtherRoom(true); } });
         items.push({ label: 'Sposta in un\u2019altra stanza\u2026', icon: 'room', run: () => { pick(); toOtherRoom(false); } });
       }

@@ -630,7 +630,7 @@
       const hit = g.hit;
       let selected = hit && (hit.type === 'node' || (this.sel.type === hit.type && this.sel.id === hit.id));
       // col mouse i mobili, le porte e gli impianti si trascinano subito (le stanze, grandi, dopo averle selezionate)
-      if (!selected && hit && this._ptype === 'mouse' && ['furniture', 'opening', 'fixture', 'column'].includes(hit.type)) { this.select({ type: hit.type, id: hit.id }); selected = true; }
+      if (!selected && hit && this._ptype === 'mouse' && ['furniture', 'opening', 'fixture', 'column', 'wall'].includes(hit.type)) { this.select({ type: hit.type, id: hit.id }); selected = true; }
       if (!selected) { g.type = 'pan'; return; }
       g.type = 'drag';
       g.target = hit;
