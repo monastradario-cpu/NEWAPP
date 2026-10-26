@@ -1,0 +1,407 @@
+/* Casa Mia — planimetria caricata: sfondo, scala, riconoscimento muri (offline e Gemini) */
+(function (root) {
+  'use strict';
+  const CM = root.CM;
+  const P = CM.plan, G = CM.geom;
+  const MAX_PX = 2000;
+
+  function readFile(file) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+  }
+  function loadImg(src) {
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+  }
+
+  // Omografia che porta i punti src nei punti dst (4 coppie) — sistema 8×8
+  function homography(src, dst) {
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = src[i], [X, Y] = dst[i];
+      A.push([x, y, 1, 0, 0, 0, -x * X, -y * X]); b.push(X);
+      A.push([0, 0, 0, x, y, 1, -x * Y, -y * Y]); b.push(Y);
+    }
+    // eliminazione di Gauss
+    for (let i = 0; i < 8; i++) {
+      let p = i; for (let r = i + 1; r < 8; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+      [A[i], A[p]] = [A[p], A[i]]; [b[i], b[p]] = [b[p], b[i]];
+      for (let r = i + 1; r < 8; r++) { const f = A[r][i] / A[i][i]; for (let c = i; c < 8; c++) A[r][c] -= f * A[i][c]; b[r] -= f * b[i]; }
+    }
+    const h = new Array(8).fill(0);
+    for (let i = 7; i >= 0; i--) { let s = b[i]; for (let c = i + 1; c < 8; c++) s -= A[i][c] * h[c]; h[i] = s / A[i][i]; }
+    return h;
+  }
+
+  const U = CM.underlay = {
+    // Restituisce un dataURL JPEG ridimensionato dall'immagine o dal PDF scelto
+    async fromFile(file) {
+      let src;
+      if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) {
+        if (!window.CasaMiaAndroid || !window.CasaMiaAndroid.pdfToImage) throw new Error('PDF');
+        const b64 = (await readFile(file)).split(',')[1];
+        const out = window.CasaMiaAndroid.pdfToImage(b64);
+        if (!out) throw new Error('PDF illeggibile');
+        src = 'data:image/png;base64,' + out;
+      } else {
+        src = await readFile(file);
+      }
+      const im = await loadImg(src);
+      const k = Math.min(1, MAX_PX / Math.max(im.naturalWidth, im.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(im, 0, 0, c.width, c.height);
+      return { src: c.toDataURL('image/jpeg', 0.85), pxW: c.width, pxH: c.height };
+    },
+
+    create(img, plan) {
+      // Larghezza iniziale ipotetica di 14 m: va calibrata su un muro noto
+      const wM = 14;
+      const b = P.bounds(Object.assign({}, plan, { underlay: null }));
+      return { src: img.src, pxW: img.pxW, pxH: img.pxH, x: b ? b.minX : 0, y: b ? b.minY : 0, wM, hM: wM * img.pxH / img.pxW, opacity: 0.5, calibrated: false };
+    },
+
+    toWorld(u, px, py) { return { x: u.x + px * u.wM / u.pxW, y: u.y + py * u.hM / u.pxH }; },
+    mPerPx(u) { return u.wM / u.pxW; },
+
+    /* ---------- Riconoscimento offline dei muri dritti ---------- */
+    async detectWalls(u) {
+      const im = await loadImg(u.src);
+      const k = Math.min(1, 1100 / Math.max(im.naturalWidth, im.naturalHeight));
+      const W = Math.round(im.naturalWidth * k), H = Math.round(im.naturalHeight * k);
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(im, 0, 0, W, H);
+      const data = ctx.getImageData(0, 0, W, H).data;
+      // scala di grigi e soglia di Otsu
+      const gray = new Uint8Array(W * H), hist = new Array(256).fill(0);
+      for (let i = 0; i < W * H; i++) { const g = (data[i * 4] * 0.3 + data[i * 4 + 1] * 0.59 + data[i * 4 + 2] * 0.11) | 0; gray[i] = g; hist[g]++; }
+      let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
+      let sumB = 0, wB = 0, best = 0, thr = 128;
+      for (let t = 0; t < 256; t++) {
+        wB += hist[t]; if (!wB) continue;
+        const wF = W * H - wB; if (!wF) break;
+        sumB += t * hist[t];
+        const mB = sumB / wB, mF = (sum - sumB) / wF, between = wB * wF * (mB - mF) * (mB - mF);
+        if (between > best) { best = between; thr = t; }
+      }
+      thr = Math.min(thr, 160);
+      const merged = U.wallsFromDark(gray.map(g => g < thr ? 1 : 0), W, H);
+      const kx = u.wM / W, ky = u.hM / H;
+      return merged.map(sg => sg.dir === 'h'
+        ? { a: { x: u.x + sg.b0 * kx, y: u.y + sg.mid * ky }, b: { x: u.x + sg.b1 * kx, y: u.y + sg.mid * ky }, t: sg.th * ky }
+        : { a: { x: u.x + sg.mid * kx, y: u.y + sg.b0 * ky }, b: { x: u.x + sg.mid * kx, y: u.y + sg.b1 * ky }, t: sg.th * kx });
+    },
+
+    /* Trova i muri dritti in un'immagine binaria (1 = nero).
+       1) chiude le doppie linee e i muri vuoti (catasto) riempiendoli;
+       2) separa le parti orizzontali e verticali con un'apertura a linea;
+       3) ogni blocco connesso diventa un muro (asse + spessore);
+       4) allunga gli estremi fino ai muri perpendicolari. */
+    wallsFromDark(dark, W, H) {
+      const S = Math.max(W, H);
+      const rc = Math.max(2, Math.round(S * 0.006));
+      const L = Math.max(12, Math.round(S * 0.03));
+      const maxThick = Math.max(6, Math.round(S * 0.035));
+      // dilatazione/erosione lungo righe o colonne con finestra [-r1, r2] (somma mobile)
+      const pass = (src, horiz, r1, r2, erode) => {
+        const out = new Uint8Array(W * H);
+        const A = horiz ? H : W, B = horiz ? W : H;
+        for (let a = 0; a < A; a++) {
+          const idx = (b) => horiz ? a * W + b : b * W + a;
+          // prefisso
+          const pre = new Int32Array(B + 1);
+          for (let b = 0; b < B; b++) pre[b + 1] = pre[b] + src[idx(b)];
+          for (let b = 0; b < B; b++) {
+            const lo = Math.max(0, b - r1), hi = Math.min(B - 1, b + r2);
+            const cnt = pre[hi + 1] - pre[lo];
+            out[idx(b)] = erode ? (cnt === (b + r2 - (b - r1) + 1) && b - r1 >= 0 && b + r2 < B ? 1 : 0) : (cnt > 0 ? 1 : 0);
+          }
+        }
+        return out;
+      };
+      // chiusura quadrata (riempie muri disegnati a doppia linea)
+      let m = pass(pass(dark, true, rc, rc, false), false, rc, rc, false);
+      m = pass(pass(m, true, rc, rc, true), false, rc, rc, true);
+      const segs = [];
+      for (const horiz of [true, false]) {
+        // apertura con una linea lunga L: restano solo i tratti orizzontali (o verticali)
+        const half = Math.floor(L / 2);
+        const op = pass(pass(m, horiz, half, L - 1 - half, true), horiz, L - 1 - half, half, false);
+        // componenti connesse
+        const lab = new Int32Array(W * H); let id = 0;
+        const stack = [];
+        for (let i = 0; i < W * H; i++) {
+          if (!op[i] || lab[i]) continue;
+          id++;
+          let x0 = W, x1 = -1, y0 = H, y1 = -1, n = 0;
+          const rowCnt = new Map();
+          stack.push(i); lab[i] = id;
+          while (stack.length) {
+            const j = stack.pop(); const x = j % W, y = (j / W) | 0; n++;
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+            const key = horiz ? y : x; rowCnt.set(key, (rowCnt.get(key) || 0) + 1);
+            if (x > 0 && op[j - 1] && !lab[j - 1]) { lab[j - 1] = id; stack.push(j - 1); }
+            if (x < W - 1 && op[j + 1] && !lab[j + 1]) { lab[j + 1] = id; stack.push(j + 1); }
+            if (y > 0 && op[j - W] && !lab[j - W]) { lab[j - W] = id; stack.push(j - W); }
+            if (y < H - 1 && op[j + W] && !lab[j + W]) { lab[j + W] = id; stack.push(j + W); }
+          }
+          const len = horiz ? x1 - x0 + 1 : y1 - y0 + 1;
+          const th = horiz ? y1 - y0 + 1 : x1 - x0 + 1;
+          if (len < L) continue;
+          if (th <= maxThick) {
+            // asse pesato sulle righe piene
+            let sw = 0, sm = 0; rowCnt.forEach((c, k) => { sw += c; sm += c * k; });
+            segs.push({ dir: horiz ? 'h' : 'v', mid: sm / sw + 0.5, b0: horiz ? x0 : y0, b1: (horiz ? x1 : y1) + 1, th });
+          } else {
+            // blocco troppo spesso: lo divido in fasce di righe piene
+            const keys = [...rowCnt.keys()].sort((p, q) => p - q);
+            let band = [];
+            const flush = () => { if (band.length >= 1 && band.length <= maxThick) segs.push({ dir: horiz ? 'h' : 'v', mid: (band[0] + band[band.length - 1] + 1) / 2, b0: horiz ? x0 : y0, b1: (horiz ? x1 : y1) + 1, th: band.length }); band = []; };
+            for (const k of keys) { if (rowCnt.get(k) >= len * 0.6) { if (band.length && k !== band[band.length - 1] + 1) flush(); band.push(k); } else flush(); }
+            flush();
+          }
+        }
+      }
+      // estendi gli estremi fino ai muri perpendicolari vicini (angoli e incroci)
+      for (const sg of segs) {
+        for (const o of segs) {
+          if (o.dir === sg.dir) continue;
+          const tol = Math.max(o.th, sg.th) + rc * 2 + 2;
+          if (sg.mid >= o.b0 - tol && sg.mid <= o.b1 + tol) {
+            if (Math.abs(sg.b0 - o.mid) < tol) sg.b0 = o.mid;
+            if (Math.abs(sg.b1 - o.mid) < tol) sg.b1 = o.mid;
+          }
+        }
+      }
+      return segs;
+    },
+
+    // Muri disegnati con due linee parallele (tipico delle planimetrie catastali): diventano un solo muro
+    mergeDoubleLines(segs) {
+      const horiz = (s) => Math.abs(s.a.y - s.b.y) < 1e-6;
+      const norm = segs.map(s => {
+        const h = horiz(s);
+        const c = h ? s.a.y : s.a.x;
+        const lo = h ? Math.min(s.a.x, s.b.x) : Math.min(s.a.y, s.b.y), hi = h ? Math.max(s.a.x, s.b.x) : Math.max(s.a.y, s.b.y);
+        return { h, c, lo, hi, t: s.t, used: false };
+      });
+      const out = [];
+      for (let i = 0; i < norm.length; i++) {
+        const a = norm[i];
+        if (a.used) continue;
+        let best = null, bestD = Infinity;
+        for (let j = i + 1; j < norm.length; j++) {
+          const b = norm[j];
+          if (b.used || b.h !== a.h) continue;
+          const d = Math.abs(a.c - b.c);
+          if (d < 0.06 || d > 0.55) continue;
+          const ov = Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo);
+          if (ov < 0.6 * Math.min(a.hi - a.lo, b.hi - b.lo)) continue;
+          if (d < bestD) { bestD = d; best = b; }
+        }
+        a.used = true;
+        let seg = a;
+        if (best) {
+          best.used = true;
+          seg = { h: a.h, c: (a.c + best.c) / 2, lo: Math.min(a.lo, best.lo), hi: Math.max(a.hi, best.hi), t: bestD + Math.max(a.t, best.t) * 0.5 };
+        }
+        out.push(seg.h ? { a: { x: seg.lo, y: seg.c }, b: { x: seg.hi, y: seg.c }, t: seg.t } : { a: { x: seg.c, y: seg.lo }, b: { x: seg.c, y: seg.hi }, t: seg.t });
+      }
+      return out;
+    },
+
+    // Ritaglia la planimetria al rettangolo (in metri) scelto dall'utente, mantenendo la scala
+    async crop(u, r) {
+      const im = await loadImg(u.src);
+      const kx = u.pxW / u.wM, ky = u.pxH / u.hM;
+      const x0 = Math.max(0, Math.floor((r.x0 - u.x) * kx)), y0 = Math.max(0, Math.floor((r.y0 - u.y) * ky));
+      const x1 = Math.min(u.pxW, Math.ceil((r.x1 - u.x) * kx)), y1 = Math.min(u.pxH, Math.ceil((r.y1 - u.y) * ky));
+      if (x1 - x0 < 20 || y1 - y0 < 20) throw new Error('Ritaglio troppo piccolo');
+      const sx = im.naturalWidth / u.pxW, sy = im.naturalHeight / u.pxH;
+      const c = document.createElement('canvas'); c.width = x1 - x0; c.height = y1 - y0;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(im, x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy, 0, 0, c.width, c.height);
+      return Object.assign({}, u, { cropped: true, src: c.toDataURL('image/jpeg', 0.9), pxW: c.width, pxH: c.height, x: u.x + x0 / kx, y: u.y + y0 / ky, wM: (x1 - x0) / kx, hM: (y1 - y0) / ky });
+    },
+
+    // Sbianca una zona della planimetria (parti che non devono entrare nella pianta)
+    async mask(u, r) {
+      const im = await loadImg(u.src);
+      const kx = u.pxW / u.wM, ky = u.pxH / u.hM;
+      const c = document.createElement('canvas'); c.width = u.pxW; c.height = u.pxH;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(im, 0, 0, c.width, c.height);
+      const x0 = (r.x0 - u.x) * kx, y0 = (r.y0 - u.y) * ky;
+      ctx.fillRect(x0, y0, (r.x1 - r.x0) * kx, (r.y1 - r.y0) * ky);
+      return Object.assign({}, u, { src: c.toDataURL('image/jpeg', 0.9) });
+    },
+
+    applyWalls(plan, segs, state) {
+      segs = U.mergeDoubleLines(segs);
+      let n = 0;
+      for (const sg of segs) {
+        if (G.dist(sg.a, sg.b) < 0.3) continue;
+        const snap = (v) => Math.round(v * 100) / 100;
+        const a = P.getOrCreateNode(plan, snap(sg.a.x), snap(sg.a.y));
+        const b = P.getOrCreateNode(plan, snap(sg.b.x), snap(sg.b.y));
+        const t = Math.min(0.5, Math.max(0.08, Math.round(sg.t * 100) / 100));
+        n += P.addWall(plan, a, b, { t, state: state || 'esistente' }).length;
+      }
+      P.tidy(plan);
+      return n;
+    },
+
+    /* ---------- Riconoscimento con Gemini ---------- */
+    async detectAI(u) {
+      const prompt = 'Sei un tecnico che legge planimetrie. L’immagine è larga ' + u.pxW + ' px e alta ' + u.pxH + ' px. ' +
+        'Restituisci SOLO JSON con questa forma: {"scala_m_per_px": numero o null, "muri": [{"x1":px,"y1":px,"x2":px,"y2":px,"spessore_px":px}], ' +
+        '"stanze": [{"nome":"Cucina","tipo":"soggiorno|cucina|camera|cameretta|bagno|corridoio|ingresso|studio|ripostiglio|lavanderia|balcone|altro","vertici":[[px,py],...]}], ' +
+        '"porte": [{"x":px,"y":px,"larghezza_px":px}], "finestre": [{"x":px,"y":px,"larghezza_px":px}]}. ' +
+        'Coordinate in pixel dell’immagine, origine in alto a sinistra. Muri come segmenti sull’asse del muro. ' +
+        'Se nella planimetria ci sono quote o misure scritte, usale per stimare scala_m_per_px.';
+      return CM.ai.text(prompt, { images: [u.src], json: true });
+    },
+
+    /* ---------- Foto storta: raddrizza dai 4 angoli del foglio ---------- */
+    // corners: 4 punti in pixel dell'immagine (alto-sx, alto-dx, basso-dx, basso-sx)
+    async warp(src, corners) {
+      const im = await loadImg(src);
+      const [a, b, c, d] = corners;
+      const wTop = Math.hypot(b.x - a.x, b.y - a.y), wBot = Math.hypot(c.x - d.x, c.y - d.y);
+      const hL = Math.hypot(d.x - a.x, d.y - a.y), hR = Math.hypot(c.x - b.x, c.y - b.y);
+      let W = Math.max(wTop, wBot), H = Math.max(hL, hR);
+      const k = Math.min(1, MAX_PX / Math.max(W, H)); W = Math.round(W * k); H = Math.round(H * k);
+      // omografia dal rettangolo d'uscita al quadrilatero (mappatura inversa)
+      const Hm = homography([[0, 0], [W, 0], [W, H], [0, H]], corners.map(p => [p.x, p.y]));
+      const sc = document.createElement('canvas'); sc.width = im.naturalWidth; sc.height = im.naturalHeight;
+      const sx = sc.getContext('2d'); sx.drawImage(im, 0, 0);
+      const sd = sx.getImageData(0, 0, sc.width, sc.height).data;
+      const oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+      const ox = oc.getContext('2d'); const od = ox.createImageData(W, H);
+      const SW = sc.width, SH = sc.height;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const z = Hm[6] * x + Hm[7] * y + 1;
+        const u = (Hm[0] * x + Hm[1] * y + Hm[2]) / z, v = (Hm[3] * x + Hm[4] * y + Hm[5]) / z;
+        const i = (y * W + x) * 4;
+        const xi = Math.round(u), yi = Math.round(v);
+        if (xi < 0 || yi < 0 || xi >= SW || yi >= SH) { od.data[i] = od.data[i + 1] = od.data[i + 2] = 255; od.data[i + 3] = 255; continue; }
+        const j = (yi * SW + xi) * 4;
+        od.data[i] = sd[j]; od.data[i + 1] = sd[j + 1]; od.data[i + 2] = sd[j + 2]; od.data[i + 3] = 255;
+      }
+      ox.putImageData(od, 0, 0);
+      return { src: oc.toDataURL('image/jpeg', 0.88), pxW: W, pxH: H };
+    },
+
+    // Trova da solo i 4 angoli del foglio (il quadrilatero chiaro più grande); se non riesce, i bordi dell'immagine
+    async guessCorners(src) {
+      const im = await loadImg(src);
+      const n = 220, k = n / Math.max(im.naturalWidth, im.naturalHeight);
+      const W = Math.round(im.naturalWidth * k), H = Math.round(im.naturalHeight * k);
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d'); x.drawImage(im, 0, 0, W, H);
+      const d = x.getImageData(0, 0, W, H).data;
+      let sum = 0; const g = new Float32Array(W * H);
+      for (let i = 0; i < W * H; i++) { g[i] = d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11; sum += g[i]; }
+      const thr = sum / (W * H);
+      // il foglio è la zona chiara: per ogni angolo prendo il punto chiaro che lo massimizza
+      const best = [[-1, 0, 0], [-1, 0, 0], [-1, 0, 0], [-1, 0, 0]];
+      const score = [(px, py) => -px - py, (px, py) => px - py, (px, py) => px + py, (px, py) => -px + py];
+      for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+        if (g[py * W + px] < thr * 1.05) continue;
+        for (let q = 0; q < 4; q++) { const s2 = score[q](px, py); if (best[q][0] === -1 || s2 > best[q][0]) best[q] = [s2, px, py]; }
+      }
+      const out = best.map(b => ({ x: b[1] / k, y: b[2] / k }));
+      const area = Math.abs((out[1].x - out[0].x) * (out[3].y - out[0].y));
+      if (best.some(b => b[0] === -1) || area < im.naturalWidth * im.naturalHeight * 0.25) return [{ x: 0, y: 0 }, { x: im.naturalWidth, y: 0 }, { x: im.naturalWidth, y: im.naturalHeight }, { x: 0, y: im.naturalHeight }];
+      return out;
+    },
+
+    /* ---------- Pulizia: tengo i muri, tolgo scritte, frecce, simboli ---------- */
+    async clean(u) {
+      const im = await loadImg(u.src);
+      const W = u.pxW, H = u.pxH;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.drawImage(im, 0, 0, W, H);
+      const d = x.getImageData(0, 0, W, H);
+      const dark = new Uint8Array(W * H);
+      for (let i = 0; i < W * H; i++) dark[i] = (d.data[i * 4] * 0.3 + d.data[i * 4 + 1] * 0.59 + d.data[i * 4 + 2] * 0.11) < 150 ? 1 : 0;
+      const minDim = Math.max(W, H) * 0.035;
+      const lab = new Int32Array(W * H); let id = 0; const keep = [0];
+      const st = [];
+      for (let i0 = 0; i0 < W * H; i0++) {
+        if (!dark[i0] || lab[i0]) continue;
+        id++; st.push(i0); lab[i0] = id;
+        let x0 = W, x1 = 0, y0 = H, y1 = 0, n = 0;
+        while (st.length) {
+          const i = st.pop(); const px = i % W, py = (i / W) | 0; n++;
+          if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py;
+          for (const j of [px > 0 ? i - 1 : -1, px < W - 1 ? i + 1 : -1, i - W, i + W]) if (j >= 0 && j < W * H && dark[j] && !lab[j]) { lab[j] = id; st.push(j); }
+        }
+        keep.push(Math.max(x1 - x0, y1 - y0) >= minDim && n > minDim * 2 ? 1 : 0);
+      }
+      for (let i = 0; i < W * H; i++) {
+        const k = dark[i] && keep[lab[i]];
+        const v = k ? 30 : 255;
+        d.data[i * 4] = d.data[i * 4 + 1] = d.data[i * 4 + 2] = v;
+      }
+      x.putImageData(d, 0, 0);
+      return Object.assign({}, u, { src: c.toDataURL('image/png'), cleaned: true });
+    },
+
+    /* ---------- Quote scritte sul disegno (con Gemini): ricava la scala ---------- */
+    async readDimensions(u) {
+      const prompt = 'Questa è una planimetria larga ' + u.pxW + ' px e alta ' + u.pxH + ' px. Trova le QUOTE scritte (numeri di misura, in metri o centimetri) e per ciascuna il tratto che misurano. ' +
+        'Rispondi SOLO JSON: {"quote": [{"valore_m": numero in metri, "x1": px, "y1": px, "x2": px, "y2": px}]}. Se non ci sono quote leggibili restituisci {"quote": []}.';
+      const res = await CM.ai.text(prompt, { images: [u.src], json: true });
+      const ks = [];
+      for (const q of res.quote || []) {
+        const L = Math.hypot(q.x2 - q.x1, q.y2 - q.y1);
+        if (q.valore_m > 0.3 && L > 20) ks.push(q.valore_m / L);
+      }
+      if (!ks.length) return null;
+      ks.sort((a, b) => a - b);
+      const med = ks[Math.floor(ks.length / 2)];
+      const good = ks.filter(k => Math.abs(k - med) / med < 0.08);
+      return { mPerPx: good.reduce((a, b) => a + b, 0) / good.length, count: good.length, total: ks.length };
+    },
+
+    applyAI(plan, u, res) {
+      const out = { walls: 0, rooms: 0, openings: 0, scaled: false };
+      if (res.scala_m_per_px > 0 && !u.calibrated) {
+        u.wM = res.scala_m_per_px * u.pxW; u.hM = res.scala_m_per_px * u.pxH; out.scaled = true;
+      }
+      const W = (x, y) => U.toWorld(u, x, y);
+      const kpx = U.mPerPx(u);
+      const segs = (res.muri || []).map(m => ({ a: W(m.x1, m.y1), b: W(m.x2, m.y2), t: (m.spessore_px || 10) * kpx }));
+      out.walls = U.applyWalls(plan, segs, 'esistente');
+      for (const st of res.stanze || []) {
+        const pts = (st.vertici || []).map(v => W(v[0], v[1]));
+        if (pts.length < 3) continue;
+        const ids = pts.map(p => P.getOrCreateNode(plan, Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100));
+        P.addRoom(plan, ids, { name: st.nome || undefined, type: CM.ROOM_TYPES.some(t => t.id === st.tipo) ? st.tipo : 'altro' });
+        out.rooms++;
+      }
+      const place = (o, kind) => {
+        const p = W(o.x, o.y);
+        let best = null, bd = 0.6;
+        for (const id in plan.walls) {
+          const w = plan.walls[id];
+          const pr = G.projSeg(p, plan.nodes[w.a], plan.nodes[w.b]);
+          if (pr.d < bd && pr.t > 0 && pr.t < 1) { bd = pr.d; best = { id, pos: pr.t * pr.L }; }
+        }
+        if (!best) return;
+        const oid = P.addOpening(plan, best.id, best.pos, kind);
+        if (o.larghezza_px) plan.openings[oid].w = Math.max(0.5, Math.min(3, Math.round(o.larghezza_px * kpx * 20) / 20));
+        P.clampOpening(plan, oid);
+        out.openings++;
+      };
+      (res.porte || []).forEach(o => place(o, 'battente'));
+      (res.finestre || []).forEach(o => place(o, 'finestra'));
+      P.tidy(plan);
+      return out;
+    }
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
